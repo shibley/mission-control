@@ -184,7 +184,7 @@ function CampaignsWidget({ campaigns }: { campaigns: typeof projectData.campaign
     <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
       <h3 className="font-bold text-white mb-3">📧 Active Campaigns</h3>
       <div className="space-y-3">
-        {Object.entries(campaigns).map(([key, campaign]) => (
+        {Object.entries(campaigns).map(([key, campaign]: [string, any]) => (
           <div key={key} className="p-2 bg-gray-800 rounded">
             <div className="text-sm text-gray-300 font-medium mb-2">{campaign.name}</div>
             <div className="grid grid-cols-4 gap-2 text-xs">

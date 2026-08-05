@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mission Control
 
-## Getting Started
-
-First, run the development server:
+Local-only project dashboard for the Bity portfolio. Rebuilt 2026-08-05 (the Feb version
+was a read-only board fed by a `memory/mission-control.md` that no longer exists).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd ~/clawd/projects/mission-control && npm run dev   # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## What it reads
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Everything is read live from `~/clawd` on each request — there is no sync step and no
+copied data to go stale. Override the workspace path with `CLAWD_ROOT`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Panel | Source |
+|---|---|
+| MRR & funnel | `memory/watchdog/YYYY-MM-DD.json` (production-watchdog output: Stripe + beacon warehouse) |
+| Sprints | `memory/work-rotation.json`, `memory/coding-sprint-state.json`, `memory/sprint-eval-log.jsonl` |
+| Needs Shib | `memory/blockers.md` |
+| Repos | `git` in each portfolio repo (unpushed / dirty / last commit) |
+| Research threads | `memory/mrr-research-queue.md` (open threads above the `## Log` section) |
+| Priorities | `memory/priorities.json` — **read AND written** |
 
-## Learn More
+## Priorities
 
-To learn more about Next.js, take a look at the following resources:
+The order of `items[]` in `memory/priorities.json` **is** the ranking. Drag a row (or use
+the up/down buttons) and it saves immediately; the status dropdown writes through the same way.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`authoritative: false` today, which means the work-sprint and coding-sprint crons do **not**
+read the file — BillyBob reads it when choosing what to pick up. Flipping it to `true` only
+makes sense once the rotation writer is wired to honour the order, and only on Shib's word.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deliberately not here
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+No auth, no Vercel deploy. The panels carry MRR, Stripe counts and blocker detail, so it
+stays on localhost until there's a reason to expose it. The `.vercel` link
+(`prj_g3l37dbL9i6WGQzghhd8sYR1D8uy`) is left in place in case that changes.

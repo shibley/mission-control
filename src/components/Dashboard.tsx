@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Snapshot } from "@/lib/data";
 import type { Priority } from "@/lib/data";
+import type { DashboardData } from "@/lib/source";
 
 const OWNER_LABEL: Record<Priority["owner"], string> = {
   shib: "SHIB",
@@ -53,11 +53,56 @@ function ago(iso?: string | null) {
   return `${Math.round(h / 24)}d ago`;
 }
 
-export default function Dashboard({ initial }: { initial: Snapshot }) {
-  const [snap, setSnap] = useState(initial);
-  const [items, setItems] = useState<Priority[]>(initial.priorities.items);
+/**
+ * Age of the pushed snapshot, loud enough that stale is never read as current.
+ * Anything past 15 minutes means the Mac's 5-minute pusher has missed at least
+ * two runs, so the number on screen is no longer describing right now.
+ */
+function Freshness({ generatedAt, source }: { generatedAt: string | null; source: string }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (source === "local") {
+    return (
+      <span className="rounded-md bg-emerald-500/15 px-2 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
+        LIVE · local filesystem
+      </span>
+    );
+  }
+
+  const ms = generatedAt ? Date.now() - new Date(generatedAt).getTime() : Infinity;
+  const min = Math.floor(ms / 60_000);
+  const tone =
+    ms < 15 * 60_000
+      ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+      : ms < 60 * 60_000
+        ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+        : "bg-rose-500/20 text-rose-200 ring-rose-500/40";
+
+  const label = !generatedAt
+    ? "NO SNAPSHOT YET"
+    : min < 1
+      ? "snapshot < 1m old"
+      : min < 90
+        ? `snapshot ${min}m old`
+        : `snapshot ${Math.round(min / 60)}h old`;
+
+  return (
+    <span className={`rounded-md px-2 py-1 text-xs font-semibold ring-1 ${tone}`}>
+      {ms >= 15 * 60_000 ? `⚠ STALE — ${label}` : label}
+    </span>
+  );
+}
+
+export default function Dashboard({ initial }: { initial: DashboardData }) {
+  const [data, setData] = useState(initial);
+  const [items, setItems] = useState<Priority[]>(initial.snapshot?.priorities.items ?? []);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const dragIndex = useRef<number | null>(null);
+  const snap = data.snapshot;
 
   const save = useCallback(async (next: Priority[]) => {
     setSaving("saving");
@@ -95,14 +140,38 @@ export default function Dashboard({ initial }: { initial: Snapshot }) {
     );
 
   const refresh = useCallback(async () => {
-    const res = await fetch("/api/snapshot");
-    if (res.ok) setSnap((await res.json()) as Snapshot);
-  }, []);
+    const res = await fetch("/api/snapshot", { cache: "no-store" });
+    if (!res.ok) return;
+    const next = (await res.json()) as DashboardData;
+    setData(next);
+    // Only adopt the server's ranking when it is newer than what is on screen,
+    // so a poll landing mid-drag cannot undo the reorder we just saved.
+    setItems((cur) => {
+      const remote = next.snapshot?.priorities;
+      if (!remote) return cur;
+      const a = Date.parse(data.snapshot?.priorities.lastUpdated ?? "") || 0;
+      const b = Date.parse(remote.lastUpdated ?? "") || 0;
+      return b > a ? remote.items : cur;
+    });
+  }, [data.snapshot?.priorities.lastUpdated]);
 
   useEffect(() => {
     const t = setInterval(refresh, 120_000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  if (!snap) {
+    return (
+      <main className="mx-auto max-w-2xl p-10 text-center">
+        <h1 className="text-2xl font-semibold">Mission Control</h1>
+        <p className="mt-4 text-sm text-white/50">
+          No snapshot has been pushed yet. The Mac uploads one every 5 minutes via
+          <code className="mx-1 rounded bg-white/10 px-1">scripts/push-snapshot.mjs</code>; if this
+          persists, that job is not running.
+        </p>
+      </main>
+    );
+  }
 
   const m = snap.money;
 
@@ -110,9 +179,12 @@ export default function Dashboard({ initial }: { initial: Snapshot }) {
     <main className="mx-auto max-w-[1500px] p-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Mission Control</h1>
-          <p className="text-sm text-white/40">
-            live from {snap.root} · watchdog {ago(m?.generatedAt)} · refreshed {ago(snap.at)}
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold">Mission Control</h1>
+            <Freshness generatedAt={data.generatedAt} source={data.source} />
+          </div>
+          <p className="mt-1 text-sm text-white/40">
+            collected {ago(data.generatedAt)} on {snap.root} · watchdog {ago(m?.generatedAt)}
           </p>
         </div>
         <div className="flex items-center gap-4">

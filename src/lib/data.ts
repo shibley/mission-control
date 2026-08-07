@@ -3,6 +3,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 // Local-only dashboard: reads the real memory files in ~/clawd directly.
+// Resolved from cwd rather than from this file's path because Next bundles the
+// module elsewhere; CLAWD_ROOT is what the launchd pusher sets, since a cron-ish
+// job cannot be trusted to start in the project directory.
 export const ROOT = process.env.CLAWD_ROOT || path.resolve(process.cwd(), "../..");
 
 const mem = (...p: string[]) => path.join(ROOT, "memory", ...p);

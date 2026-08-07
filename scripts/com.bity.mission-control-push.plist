@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bity.mission-control-push</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>cd /Users/billybob/clawd/projects/mission-control &amp;&amp; exec /opt/homebrew/bin/node scripts/push-snapshot.mjs</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CLAWD_ROOT</key>
+        <string>/Users/billybob/clawd</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/billybob/clawd/memory/mission-control-push.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/billybob/clawd/memory/mission-control-push.log</string>
+</dict>
+</plist>

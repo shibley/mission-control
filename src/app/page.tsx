@@ -1,8 +1,8 @@
 import Dashboard from "@/components/Dashboard";
-import { snapshot } from "@/lib/data";
+import { getDashboardData } from "@/lib/source";
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
-  return <Dashboard initial={snapshot()} />;
+export default async function Page() {
+  return <Dashboard initial={await getDashboardData()} />;
 }

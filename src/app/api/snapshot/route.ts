@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { snapshot } from "@/lib/data";
+import { getDashboardData } from "@/lib/source";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(snapshot());
+  return NextResponse.json(await getDashboardData());
 }

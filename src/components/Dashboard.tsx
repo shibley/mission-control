@@ -175,6 +175,16 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
 
   const m = snap.money;
 
+  // Done items are hidden from the ranked list, so the visible position number
+  // has to be counted over active items only — otherwise the list reads
+  // "1, 3, 4" wherever a completed item sits in the underlying array.
+  const activeRank = new Map<string, number>();
+  for (const it of items) {
+    if (it.status !== "done") activeRank.set(it.id, activeRank.size + 1);
+  }
+  const activeCount = activeRank.size;
+  const doneCount = items.length - activeCount;
+
   return (
     <main className="mx-auto max-w-[1500px] p-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -205,7 +215,7 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
         {/* ---------------- Priorities: the ranked list ---------------- */}
         <div className="lg:col-span-2">
           <Card
-            title="Priorities — drag to rank"
+            title={`Priorities — drag to rank (${activeCount} open)`}
             right={
               <span>
                 {snap.priorities.authoritative ? "authoritative" : "advisory"} ·{" "}
@@ -220,7 +230,11 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
             }
           >
             <ol className="space-y-2">
-              {items.map((it, i) => (
+              {/* Completed items drop out of the ranked list into the Done
+                  section below — a finished item isn't a priority, and it was
+                  pushing live work down the page. `i` stays the index into the
+                  full `items` array so drag/move/save keep working unchanged. */}
+              {items.map((it, i) => (it.status === "done" ? null : (
                 <li
                   key={it.id}
                   draggable
@@ -235,7 +249,7 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
                 >
                   <div className="flex items-start gap-3">
                     <span className="mt-0.5 w-6 shrink-0 text-center text-sm font-semibold tabular-nums text-white/30">
-                      {i + 1}
+                      {activeRank.get(it.id)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -286,10 +300,54 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
                     </div>
                   </div>
                 </li>
-              ))}
+              )))}
             </ol>
             {items.length === 0 ? (
               <p className="text-sm text-white/40">No priorities in memory/priorities.json yet.</p>
+            ) : activeCount === 0 ? (
+              <p className="text-sm text-white/40">Everything is done. Nothing ranked.</p>
+            ) : null}
+
+            {doneCount > 0 ? (
+              <details className="mt-4 rounded-lg border border-white/10 bg-white/[0.02]">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white/40">
+                  Done · {doneCount}
+                </summary>
+                <ul className="space-y-1 px-3 pb-3">
+                  {items.map((it, i) => (it.status !== "done" ? null : (
+                    <li
+                      key={it.id}
+                      className="flex items-start gap-2 rounded border border-white/5 bg-white/[0.02] p-2"
+                    >
+                      <span className="mt-0.5 text-emerald-400/70">✓</span>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm text-white/45 line-through decoration-white/20">
+                          {it.title}
+                        </span>
+                        {it.note ? (
+                          <p className="mt-0.5 text-[11px] italic text-white/25">{it.note}</p>
+                        ) : null}
+                      </div>
+                      <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-white/40">
+                        {OWNER_LABEL[it.owner]}
+                      </span>
+                      {/* Reopening puts it straight back into the ranked list
+                          at its original position — nothing is lost by marking
+                          something done too early. */}
+                      <select
+                        value={it.status}
+                        onChange={(e) => setStatus(it.id, e.target.value as Priority["status"])}
+                        className="shrink-0 rounded border border-white/10 bg-transparent px-1 py-0.5 text-[11px] text-white/40"
+                      >
+                        <option value="open">open</option>
+                        <option value="doing">doing</option>
+                        <option value="blocked">blocked</option>
+                        <option value="done">done</option>
+                      </select>
+                    </li>
+                  )))}
+                </ul>
+              </details>
             ) : null}
           </Card>
         </div>

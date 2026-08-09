@@ -16,6 +16,13 @@ const STATUS_STYLE: Record<Priority["status"], string> = {
   done: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
 };
 
+const IDEA_STYLE: Record<string, string> = {
+  candidate: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
+  "candidate-unverified": "bg-amber-500/15 text-amber-300 ring-amber-500/30",
+  parked: "bg-white/10 text-white/50 ring-white/15",
+  rejected: "bg-rose-500/15 text-rose-300/80 ring-rose-500/30",
+};
+
 function Card({
   title,
   right,
@@ -184,6 +191,10 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
   }
   const activeCount = activeRank.size;
   const doneCount = items.length - activeCount;
+
+  // Optional so a snapshot pushed before the ideas panel existed still renders.
+  const ideas = snap.ideas?.items ?? [];
+  const note = snap.ideas?.note;
 
   return (
     <main className="mx-auto max-w-[1500px] p-6">
@@ -511,6 +522,57 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
             ))}
           </div>
         </Card>
+
+        {/* ---------------- Idea backlog ----------------
+            Kept out of the ranked priorities list on purpose: an idea is not a
+            commitment, and mixing the two is what pushed live work down the
+            page before. `ideas` is optional because a snapshot pushed before
+            this panel existed will not carry the key. */}
+        {ideas.length ? (
+          <Card
+            title="Idea backlog"
+            right={`${ideas.filter((i) => i.verdict.startsWith("candidate")).length} live · memory/app-ideas.json`}
+          >
+            <div className="space-y-2 text-xs">
+              {ideas.map((idea) => (
+                <details
+                  key={idea.id}
+                  className="rounded-lg border border-white/10 bg-white/[0.03] p-2"
+                >
+                  <summary className="flex cursor-pointer select-none items-center gap-2">
+                    <span
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1 ${
+                        IDEA_STYLE[idea.verdict] ?? IDEA_STYLE.parked
+                      }`}
+                    >
+                      {idea.verdict}
+                    </span>
+                    <span
+                      className={
+                        idea.verdict === "rejected"
+                          ? "text-white/35 line-through decoration-white/20"
+                          : "text-white/80"
+                      }
+                    >
+                      {idea.title}
+                    </span>
+                  </summary>
+                  <div className="mt-2 space-y-1 border-t border-white/5 pt-2 text-white/50">
+                    {idea.evidence ? <p>{idea.evidence}</p> : null}
+                    {idea.risk ? <p className="text-rose-300/70">Risk: {idea.risk}</p> : null}
+                    {idea.nextStep ? (
+                      <p className="text-white/70">Next: {idea.nextStep}</p>
+                    ) : null}
+                    {idea.source ? (
+                      <p className="text-[11px] italic text-white/25">{idea.source}</p>
+                    ) : null}
+                  </div>
+                </details>
+              ))}
+            </div>
+            {note ? <p className="mt-3 text-[11px] italic text-white/30">{note}</p> : null}
+          </Card>
+        ) : null}
       </div>
     </main>
   );

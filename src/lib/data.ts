@@ -59,6 +59,31 @@ export function writePriorities(file: PrioritiesFile) {
   return next;
 }
 
+// ---------- Idea backlog ----------
+
+// Deliberately a separate file from priorities.json: the ranked list is for
+// decisions and in-flight work, and a pile of unvetted ideas would swamp it.
+export type Idea = {
+  id: string;
+  title: string;
+  kind: string;
+  /** candidate | candidate-unverified | parked | rejected */
+  verdict: string;
+  source?: string;
+  evidence?: string;
+  risk?: string;
+  nextStep?: string;
+};
+
+export type IdeasFile = { lastUpdated: string; note?: string; items: Idea[] };
+
+export function readIdeas(): IdeasFile {
+  return readJson<IdeasFile>(mem("app-ideas.json"), {
+    lastUpdated: new Date().toISOString(),
+    items: [],
+  });
+}
+
 // ---------- MRR / funnel, from the production-watchdog day files ----------
 
 type WatchdogStripe = Record<string, number | null>;
@@ -332,6 +357,7 @@ export function snapshot() {
     repos: reposPanel(),
     research: researchPanel(),
     priorities: readPriorities(),
+    ideas: readIdeas(),
   };
 }
 

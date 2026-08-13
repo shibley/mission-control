@@ -144,6 +144,11 @@ export function moneyPanel() {
       botShare7d: se7 + (a?.se7Bot ?? 0) > 0 ? (a?.se7Bot ?? 0) / (se7 + (a?.se7Bot ?? 0)) : 0,
       checkoutStarts7d: starts7,
       paid7d: Number(s.realPaid7d ?? 0),
+      // Cash actually collected. MRR counts live subscriptions only, so a
+      // one-time sale (the $79 Verified listings, which is the only offer
+      // aisotools has ever converted) is invisible without this.
+      cash7d: Number(s.paymentsAmount7d ?? 0) / 100,
+      cash24h: Number(s.paymentsAmount24h ?? 0) / 100,
       startRate7d: se7 > 0 ? starts7 / se7 : 0,
       topReferrers: a?.topReferrers?.slice(0, 4) ?? [],
       errors: p.errors ?? [],
@@ -163,6 +168,7 @@ export function moneyPanel() {
   return {
     generatedAt: latest.data.generatedAt ?? null,
     totalMrr: props.reduce((s, p) => s + p.mrr, 0),
+    totalCash7d: props.reduce((s, p) => s + p.cash7d, 0),
     totalEvents: latest.data.analytics?.totalEvents ?? 0,
     properties: props.sort((a, b) => b.mrr - a.mrr),
     trend,

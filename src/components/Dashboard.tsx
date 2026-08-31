@@ -214,8 +214,8 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
             <div className="text-xs text-white/40">portfolio MRR (subscriptions)</div>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-semibold tabular-nums">{money(m?.totalCash7d ?? 0)}</div>
-            <div className="text-xs text-white/40">cash collected 7d</div>
+            <div className="text-3xl font-semibold tabular-nums">{money(m?.totalCash30d ?? 0)}</div>
+            <div className="text-xs text-white/40">cash collected 30d</div>
           </div>
           <button
             onClick={refresh}
@@ -398,7 +398,7 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
                     paid 7d <span className="tabular-nums text-white/80">{p.paid7d}</span>
                   </div>
                   <div>
-                    cash 7d <span className="tabular-nums text-white/80">{money(p.cash7d)}</span>
+                    cash 30d <span className="tabular-nums text-white/80">{money(p.cash30d)}</span>
                   </div>
                 </dl>
                 {p.errors.length ? (

@@ -149,6 +149,10 @@ export function moneyPanel() {
       // aisotools has ever converted) is invisible without this.
       cash7d: Number(s.paymentsAmount7d ?? 0) / 100,
       cash24h: Number(s.paymentsAmount24h ?? 0) / 100,
+      // 30d is the headline window (Shib, 2026-08-31) — 7d is too short to show
+      // anything on a portfolio that collects a handful of payments a month.
+      // Day files written before that date have no 30d field and read as 0.
+      cash30d: Number(s.paymentsAmount30d ?? 0) / 100,
       startRate7d: se7 > 0 ? starts7 / se7 : 0,
       topReferrers: a?.topReferrers?.slice(0, 4) ?? [],
       errors: p.errors ?? [],
@@ -169,6 +173,7 @@ export function moneyPanel() {
     generatedAt: latest.data.generatedAt ?? null,
     totalMrr: props.reduce((s, p) => s + p.mrr, 0),
     totalCash7d: props.reduce((s, p) => s + p.cash7d, 0),
+    totalCash30d: props.reduce((s, p) => s + p.cash30d, 0),
     totalEvents: latest.data.analytics?.totalEvents ?? 0,
     properties: props.sort((a, b) => b.mrr - a.mrr),
     trend,

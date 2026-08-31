@@ -183,6 +183,11 @@ type Rotation = {
   lastUpdated?: string;
   workTypes?: string[];
   sprintInstructions?: Record<string, string>;
+  // The coding sprint moved its state in here on 2026-08-22; coding-sprint-state.json
+  // is a legacy file nothing writes any more. Read these first, fall back to it.
+  lastBuildAt?: string;
+  currentBuild?: string;
+  lastBuilt?: Record<string, string>;
 };
 
 type CodingState = {
@@ -202,6 +207,25 @@ export type EvalRow = {
   why?: string;
   next_focus?: string;
 };
+
+// The coding sprint picks the least-recently-built slot that is not ⛔ PAUSED,
+// so the "next" here is derived the same way rather than read from a stale field.
+function codingPanel(rot: Rotation, legacy: CodingState, paused: string[]) {
+  const built = rot.lastBuilt ?? {};
+  const order = Object.keys(built).length
+    ? Object.entries(built)
+        .sort((a, b) => String(a[1]).localeCompare(String(b[1])))
+        .map(([slot]) => slot)
+    : (legacy.rotationOrder ?? []);
+  const next = order.find((slot) => !paused.includes(slot)) ?? null;
+
+  return {
+    lastUpdated: rot.lastBuildAt ?? legacy.lastUpdated ?? null,
+    last: rot.currentBuild ?? legacy.lastBuild ?? null,
+    next: next ?? legacy.nextBuild ?? null,
+    order,
+  };
+}
 
 export function sprintPanel() {
   const rot = readJson<Rotation>(mem("work-rotation.json"), {});
@@ -248,12 +272,7 @@ export function sprintPanel() {
       slots: rot.workTypes ?? [],
       paused,
     },
-    coding: {
-      lastUpdated: coding.lastUpdated ?? null,
-      last: coding.lastBuild ?? null,
-      next: coding.nextBuild ?? null,
-      order: coding.rotationOrder ?? [],
-    },
+    coding: codingPanel(rot, coding, paused),
     recent,
     typeScores,
   };

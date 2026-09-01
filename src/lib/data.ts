@@ -315,6 +315,10 @@ const REPOS = [
   "ship-job-board",
   "landscapingai",
   "wholesmb",
+  // Shopify App Store track for RatedWithAI. No git remote yet and deliberately
+  // not in deploy-batch, so `unpushed` reads 0 — the useful signals here are
+  // last-commit and dirtyFiles.
+  "rwa-shopify-app",
 ];
 
 function git(repo: string, args: string[]): string {

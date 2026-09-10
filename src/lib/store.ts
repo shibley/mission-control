@@ -22,6 +22,13 @@ import type { PrioritiesFile, Snapshot } from "./data";
 const SNAPSHOT_PREFIX = "mission-control/snapshot/";
 const PRIORITIES_PREFIX = "mission-control/priorities/";
 
+// Slide mirror. Vercel has no filesystem, so the distributionmax slides the Mac
+// generated are copied here for the /distributionmax page to display. Keys are
+// content-addressed (<set-id>/<sha1-8>-<file>), which buys the same immutability
+// the JSON keys get *and* lets the pusher skip anything already uploaded — these
+// are hundreds of KB each and the push runs every 5 minutes.
+const SLIDE_PREFIX = "mission-control/dmx/";
+
 // Enough history to debug a bad push, few enough to stay tiny.
 const KEEP = 3;
 
@@ -83,6 +90,47 @@ async function readJson<T>(prefix: string): Promise<T | null> {
 
 export const readStoredSnapshot = () => readJson<StoredSnapshot>(SNAPSHOT_PREFIX);
 export const readStoredPriorities = () => readJson<PrioritiesFile>(PRIORITIES_PREFIX);
+
+export type MirroredSlide = { key: string; url: string };
+
+/** Every mirrored slide, keyed by the content-addressed key the pusher sends. */
+export async function listMirroredSlides(): Promise<Map<string, string>> {
+  const found = new Map<string, string>();
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: SLIDE_PREFIX, limit: 1000, cursor });
+    for (const b of page.blobs) found.set(b.pathname.slice(SLIDE_PREFIX.length), b.url);
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  return found;
+}
+
+export async function writeMirroredSlide(key: string, body: Buffer, contentType: string) {
+  const { url } = await put(`${SLIDE_PREFIX}${key}`, body, {
+    access: "public",
+    contentType,
+    addRandomSuffix: false,
+    // Content-addressed, so this body can never change.
+    cacheControlMaxAge: 31_536_000,
+  });
+  return url;
+}
+
+/**
+ * Drop mirrored slides the Mac no longer has. `keep` is the pusher's complete
+ * current key set, so anything outside it belongs to a deleted or regenerated
+ * set — without this the mirror only ever grows.
+ */
+export async function pruneMirroredSlides(keep: Set<string>) {
+  try {
+    const have = await listMirroredSlides();
+    const stale = [...have].filter(([k]) => !keep.has(k)).map(([, url]) => url);
+    for (let i = 0; i < stale.length; i += 100) await del(stale.slice(i, i + 100));
+    return stale.length;
+  } catch {
+    return 0;
+  }
+}
 
 export const writeStoredSnapshot = (v: StoredSnapshot) => writeJson(SNAPSHOT_PREFIX, v);
 export const writeStoredPriorities = (v: PrioritiesFile) => writeJson(PRIORITIES_PREFIX, v);

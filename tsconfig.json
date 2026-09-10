@@ -6,6 +6,10 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // The launchd pusher imports src/lib/data.ts through Node's type stripping,
+    // which resolves specifiers literally — so relative imports there carry the
+    // .ts extension and this is what lets tsc accept them.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

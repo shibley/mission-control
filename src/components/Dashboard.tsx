@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Priority } from "@/lib/data";
 import type { DashboardData } from "@/lib/source";
@@ -217,6 +218,12 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
             <div className="text-3xl font-semibold tabular-nums">{money(m?.totalCash30d ?? 0)}</div>
             <div className="text-xs text-white/40">cash collected 30d</div>
           </div>
+          <Link
+            href="/distributionmax"
+            className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
+          >
+            DistributionMax
+          </Link>
           <button
             onClick={refresh}
             className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"

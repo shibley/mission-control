@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { distributionmaxPanel } from "./distributionmax.ts";
+import { researchTab } from "./research.ts";
 
 // Local-only dashboard: reads the real memory files in ~/clawd directly.
 // Resolved from cwd rather than from this file's path because Next bundles the
@@ -394,6 +395,7 @@ export function snapshot() {
     priorities: readPriorities(),
     ideas: readIdeas(),
     distributionmax: distributionmaxPanel(ROOT),
+    researchTab: researchTab(ROOT),
   };
 }
 

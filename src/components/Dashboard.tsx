@@ -224,6 +224,12 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
           >
             DistributionMax
           </Link>
+          <Link
+            href="/research"
+            className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
+          >
+            Research
+          </Link>
           <button
             onClick={refresh}
             className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"

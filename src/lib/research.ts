@@ -115,8 +115,13 @@ function replicationQueue(text: string): ReplicationQueueItem[] {
 }
 
 function replicationEntries(text: string): ReplicationEntry[] {
-  const body = section(text, /Entries/i);
-  const blocks = body.split(/^(?=###\s)/m).filter((b) => /^###\s/.test(b));
+  // Everything from "## Entries" to EOF, not just that section: runners append
+  // entries at the bottom of the file, which sits under later "## … QUEUE"
+  // headings (added 2026-10-02/03). Reading only the Entries section froze the tab
+  // at 10-03. Only dated "### YYYY-MM-DD" blocks count as entries.
+  const start = text.search(/^##\s+Entries\b/im);
+  const body = start >= 0 ? text.slice(start) : "";
+  const blocks = body.split(/^(?=###\s)/m).filter((b) => /^###\s+\d{4}-\d{2}-\d{2}/.test(b));
   const out: ReplicationEntry[] = [];
   for (const block of blocks) {
     try {
@@ -149,8 +154,9 @@ function replicationEntries(text: string): ReplicationEntry[] {
       // skip the entry, keep the page
     }
   }
-  // Newest first; the log is append-only so file order is oldest-first.
-  return out.reverse();
+  // Newest first. File order is mostly oldest-first but not strictly (runners
+  // append out of order), so sort by date; reverse first so ties keep newest-appended on top.
+  return out.reverse().sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
 }
 
 // ---------- 2. replicate-brief-*.md ----------
@@ -158,7 +164,12 @@ function replicationEntries(text: string): ReplicationEntry[] {
 function briefs(memDir: string): ReplicateBrief[] {
   let files: string[] = [];
   try {
-    files = fs.readdirSync(memDir).filter((f) => /^replicate-brief-.*\.md$/.test(f)).sort().reverse();
+    // Sort by the trailing date, not the name: a name sort put 10-02 "workspace…" above 10-08 "reddit…".
+    const dateOf = (f: string) => f.match(/(\d{4}-\d{2}-\d{2})\.md$/)?.[1] ?? "";
+    files = fs
+      .readdirSync(memDir)
+      .filter((f) => /^replicate-brief-.*\.md$/.test(f))
+      .sort((a, b) => dateOf(b).localeCompare(dateOf(a)) || b.localeCompare(a));
   } catch {
     return [];
   }

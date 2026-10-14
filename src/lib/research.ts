@@ -91,7 +91,7 @@ const VERDICT_RE = /\b(REPLICATE|PARTIAL|NO)\b/;
 
 // ---------- 1. agentic-replication-log.md ----------
 
-function replicationQueue(text: string): ReplicationQueueItem[] {
+export function replicationQueue(text: string): ReplicationQueueItem[] {
   const out: ReplicationQueueItem[] = [];
   for (const line of section(text, /Queue/i).split("\n")) {
     const top = line.match(/^-\s+(.+)$/);
@@ -116,7 +116,7 @@ function replicationQueue(text: string): ReplicationQueueItem[] {
   return out;
 }
 
-function replicationEntries(text: string): ReplicationEntry[] {
+export function replicationEntries(text: string): ReplicationEntry[] {
   // Everything from "## Entries" to EOF, not just that section: runners append
   // entries at the bottom of the file, which sits under later "## … QUEUE"
   // headings (added 2026-10-02/03). Reading only the Entries section froze the tab

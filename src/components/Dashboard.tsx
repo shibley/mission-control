@@ -230,6 +230,12 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
           >
             Research
           </Link>
+          <Link
+            href="/shopify"
+            className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
+          >
+            Shopify apps
+          </Link>
           <button
             onClick={refresh}
             className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"

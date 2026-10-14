@@ -31,6 +31,8 @@ export type ReplicationEntry = {
   by: string | null;
   reason: string | null;
   doc: string | null;
+  /** Shib's call on the idea, from a "- Decision (Shib YYYY-MM-DD): …" bullet. */
+  decision: string | null;
 };
 
 export type ReplicateBrief = {
@@ -149,7 +151,11 @@ function replicationEntries(text: string): ReplicationEntry[] {
         .replace(/[`*]/g, "")
         .trim() ?? null;
 
-      out.push({ date, company, verdict, by, reason: clip(reason, 220), doc });
+      // Last one wins: a later decision supersedes an earlier one.
+      const decision =
+        [...bullets].reverse().find((l) => /^Decision\b/i.test(l))?.replace(/[`*]/g, "").trim() ?? null;
+
+      out.push({ date, company, verdict, by, reason: clip(reason, 220), doc, decision: clip(decision, 220) });
     } catch {
       // skip the entry, keep the page
     }

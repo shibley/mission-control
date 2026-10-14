@@ -176,6 +176,7 @@ export default function Research({ initial }: { initial: DashboardData }) {
                     </span>
                   </div>
                   {e.reason ? <p className="mt-1 text-xs text-white/60">{e.reason}</p> : null}
+                  {e.decision ? <p className="mt-1 text-xs font-medium text-amber-300/90">{e.decision}</p> : null}
                   {e.doc ? (
                     <p className="mt-1 text-[11px]">
                       <DocLink doc={e.doc} local={local} />

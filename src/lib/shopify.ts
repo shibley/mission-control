@@ -39,7 +39,12 @@ export type ShopifyListing = {
   reviews: number | null;
   rating: number | null;
   launched: string | null;
+  /** Set only when no good read has ever been made. */
   error: string | null;
+  /** When the values above were read off a 200. null = never. */
+  fetchedAt: string | null;
+  /** The most recent fetch, which may have failed (429) while the values above stand. */
+  lastAttempt: { at: string; status: number | null; error: string | null } | null;
 };
 
 export type ShopifyGate = {
@@ -111,24 +116,14 @@ function discoverApps(root: string): { name: string; handle: string; repo: strin
 
 // ---------- public listing ----------
 
-function listing(handle: string): ShopifyListing {
-  const url = `https://apps.shopify.com/${handle}`;
-  const base: ShopifyListing = { url, httpStatus: null, title: null, prices: [], reviews: null, rating: null, launched: null, error: null };
-  let raw: string;
-  try {
-    // curl, not fetch: snapshot() is synchronous (the pusher and every page call it).
-    raw = execFileSync(
-      "/usr/bin/curl",
-      ["-sL", "-m", "15", "-A", "Mozilla/5.0 (mission-control)", "-w", "\n__HTTP__%{http_code}", url],
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }
-    );
-  } catch (e) {
-    return { ...base, error: e instanceof Error ? e.message.split("\n")[0] : String(e) };
-  }
-  const at = raw.lastIndexOf("\n__HTTP__");
-  const html = at >= 0 ? raw.slice(0, at) : raw;
-  const httpStatus = at >= 0 ? Number(raw.slice(at + 9)) || null : null;
+// The pusher runs every 5 minutes; apps.shopify.com answers 429 to an IP that
+// polls it that often (measured 2026-10-13). So the page is fetched at most once
+// per LISTING_TTL_MS and the last good read is kept on disk: a 429 or timeout
+// shows the previous numbers with their age, never blanks.
+const LISTING_TTL_MS = 6 * 3600_000;
+const listingCache = (root: string) => path.join(root, "memory", "data", "shopify-listing-cache.json");
 
+export function parseListing(url: string, html: string): Omit<ShopifyListing, "fetchedAt" | "lastAttempt"> {
   const title = html.match(/<title>([^<]*)<\/title>/)?.[1];
   // Each plan card's heading carries its price as aria-label="$29/month".
   const prices = [...html.matchAll(/app-details-pricing-format-group[^>]*aria-label="([^"]+)"/g)].map((m) => decode(m[1]));
@@ -156,16 +151,64 @@ function listing(handle: string): ShopifyListing {
   const launchedDate = launchedText ? new Date(`${launchedText} 12:00 UTC`) : null;
   const launched = launchedDate && !Number.isNaN(launchedDate.getTime()) ? launchedDate.toISOString().slice(0, 10) : null;
 
-  return {
-    url,
-    httpStatus,
-    title: title ? decode(title.trim()) : null,
-    prices,
-    reviews,
-    rating,
-    launched,
-    error: httpStatus && httpStatus !== 200 ? `HTTP ${httpStatus}` : null,
-  };
+  return { url, httpStatus: 200, title: title ? decode(title.trim()) : null, prices, reviews, rating, launched, error: null };
+}
+
+function listing(root: string, handle: string): ShopifyListing {
+  const url = `https://apps.shopify.com/${handle}`;
+  let cache: Record<string, ShopifyListing> = {};
+  try {
+    cache = JSON.parse(fs.readFileSync(listingCache(root), "utf8"));
+  } catch {
+    // first run
+  }
+  const prev = cache[handle];
+  const now = new Date().toISOString();
+  const lastTry = prev?.lastAttempt?.at ? Date.parse(prev.lastAttempt.at) : 0;
+  if (prev && Date.now() - lastTry < LISTING_TTL_MS) return prev;
+
+  let status: number | null = null;
+  let html = "";
+  let err: string | null = null;
+  try {
+    // curl, not fetch: snapshot() is synchronous (the pusher and every page call it).
+    const raw = execFileSync(
+      "/usr/bin/curl",
+      ["-sL", "-m", "15", "-A", "Mozilla/5.0", "-w", "\n__HTTP__%{http_code}", url],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }
+    );
+    const at = raw.lastIndexOf("\n__HTTP__");
+    html = at >= 0 ? raw.slice(0, at) : raw;
+    status = at >= 0 ? Number(raw.slice(at + 9)) || null : null;
+  } catch (e) {
+    err = e instanceof Error ? e.message.split("\n")[0] : String(e);
+  }
+  if (status !== 200) err ??= `HTTP ${status ?? "?"}`;
+
+  const next: ShopifyListing =
+    status === 200
+      ? { ...parseListing(url, html), fetchedAt: now, lastAttempt: { at: now, status, error: null } }
+      : prev
+        ? { ...prev, lastAttempt: { at: now, status, error: err } }
+        : {
+            url,
+            httpStatus: status,
+            title: null,
+            prices: [],
+            reviews: null,
+            rating: null,
+            launched: null,
+            error: err,
+            fetchedAt: null,
+            lastAttempt: { at: now, status, error: err },
+          };
+  try {
+    fs.mkdirSync(path.dirname(listingCache(root)), { recursive: true });
+    fs.writeFileSync(listingCache(root), JSON.stringify({ ...cache, [handle]: next }, null, 2) + "\n");
+  } catch {
+    // read-only filesystem (Vercel): the pushed snapshot already carries the values
+  }
+  return next;
 }
 
 // ---------- gate, from the meter's own ledger ----------
@@ -242,7 +285,7 @@ function sprints(root: string, prefix: string): ShopifySprint[] {
 
 export function shopifyTab(root: string): ShopifyTab {
   const apps = discoverApps(root).map(({ name, handle, repo }) => {
-    const l = listing(handle);
+    const l = listing(root, handle);
     const w = METERS[handle];
     return {
       name,

@@ -79,7 +79,9 @@ function Stat({ label, value, tone }: { label: string; value: React.ReactNode; t
 
 function AppCard({ app }: { app: ShopifyApp }) {
   const l = app.listing;
-  const live = l.httpStatus === 200 && !l.error;
+  // A 429 on the latest refetch is our poll rate, not the listing going down —
+  // only a non-200/non-429 answer reads as not live.
+  const live = l.httpStatus === 200 && (!l.lastAttempt?.status || [200, 429].includes(l.lastAttempt.status));
   const g = app.gate;
   return (
     <Card
@@ -92,14 +94,20 @@ function AppCard({ app }: { app: ShopifyApp }) {
     >
       <div className="mb-3 flex flex-wrap items-baseline gap-2 text-sm">
         <Badge
-          label={live ? "LIVE" : l.httpStatus ? `HTTP ${l.httpStatus}` : "UNREACHABLE"}
+          label={live ? "LIVE" : (l.lastAttempt?.status ?? l.httpStatus) ? `HTTP ${l.lastAttempt?.status ?? l.httpStatus}` : "UNREACHABLE"}
           style={live ? VERDICT_STYLE.REPLICATE : VERDICT_STYLE.NO}
         />
         <a href={l.url} target="_blank" rel="noreferrer" className="text-sky-300 hover:underline">
           {l.url.replace(/^https:\/\//, "")}
         </a>
       </div>
-      {l.title ? <p className="mb-3 text-xs text-white/50">{l.title}</p> : null}
+      {l.title ? <p className="mb-1 text-xs text-white/50">{l.title}</p> : null}
+      <p className="mb-3 text-[11px] text-white/35">
+        listing read {when(l.fetchedAt)} (refetched at most every 6h — Shopify 429s a 5-min poller)
+        {l.lastAttempt?.error && l.fetchedAt ? (
+          <span className="text-amber-300/80"> · last refetch {when(l.lastAttempt.at)} failed: {l.lastAttempt.error}</span>
+        ) : null}
+      </p>
       {l.error ? <p className="mb-3 rounded-lg bg-rose-500/10 p-2 text-xs text-rose-300">listing: {l.error}</p> : null}
 
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">

@@ -321,6 +321,8 @@ const REPOS = [
   // not in deploy-batch, so `unpushed` reads 0 — the useful signals here are
   // last-commit and dirtyFiles.
   "rwa-shopify-app",
+  // topleaderboard.com — tracking only (Shib 2026-10-13); no content/SEO work.
+  "topleaderboards",
 ];
 
 function git(repo: string, args: string[]): string {

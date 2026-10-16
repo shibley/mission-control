@@ -324,6 +324,9 @@ const REPOS = [
   "rwa-shopify-app",
   // topleaderboard.com — tracking only (Shib 2026-10-13); no content/SEO work.
   "topleaderboards",
+  // yardbuildplans.com — DIY backyard plans (Shib GO 2026-10-15). Push to main =
+  // Vercel deploy; deliberately not in deploy-batch.
+  "yardbuildplans",
 ];
 
 function git(repo: string, args: string[]): string {

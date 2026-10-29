@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { distributionmaxPanel } from "./distributionmax.ts";
 import { researchTab } from "./research.ts";
 import { shopifyTab } from "./shopify.ts";
+import { newlyupTab } from "./newlyup.ts";
 
 // Local-only dashboard: reads the real memory files in ~/clawd directly.
 // Resolved from cwd rather than from this file's path because Next bundles the
@@ -403,6 +404,7 @@ export function snapshot() {
     distributionmax: distributionmaxPanel(ROOT),
     researchTab: researchTab(ROOT),
     shopifyTab: shopifyTab(ROOT),
+    newlyupTab: newlyupTab(ROOT),
   };
 }
 

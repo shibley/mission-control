@@ -231,6 +231,12 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
             Research
           </Link>
           <Link
+            href="/newlyup"
+            className="rounded-lg border border-emerald-400/40 px-3 py-2 text-sm text-emerald-200 hover:bg-white/5"
+          >
+            Newly Up
+          </Link>
+          <Link
             href="/shopify"
             className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
           >

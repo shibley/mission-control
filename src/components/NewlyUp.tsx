@@ -22,8 +22,8 @@ const FB_STYLE: Record<string, string> = {
 
 function Card({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <header className="mb-3 flex items-baseline justify-between gap-3">
+    <section className="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <header className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 className="text-sm font-semibold tracking-wide text-white/80 uppercase">{title}</h2>
         {right ? <div className="text-xs text-white/40">{right}</div> : null}
       </header>
@@ -34,7 +34,7 @@ function Card({ title, right, children }: { title: string; right?: React.ReactNo
 
 function Badge({ label, style }: { label: string; style?: string }) {
   return (
-    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ring-1 ${style || "bg-white/10 text-white/60 ring-white/15"}`}>
+    <span className={`shrink-0 self-start rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ring-1 ${style || "bg-white/10 text-white/60 ring-white/15"}`}>
       {label}
     </span>
   );
@@ -48,13 +48,13 @@ function when(iso?: string | null) {
 }
 
 export default function NewlyUp({ initial }: { initial: DashboardData }) {
-  const t = (initial as unknown as { newlyupTab?: import("@/lib/newlyup").NewlyUpTab }).newlyupTab;
+  const t = (initial.snapshot as { newlyupTab?: import("@/lib/newlyup").NewlyUpTab } | null)?.newlyupTab;
   if (!t) return <main className="p-6 text-white/60">No Newly Up data in this snapshot yet.</main>;
   const counts = t.tasks.reduce<Record<string, number>>((a, x) => ((a[x.status] = (a[x.status] || 0) + 1), a), {});
   const leads = t.fb.filter((e) => e.kind === "lead" || e.kind === "comment" || e.kind === "dm").length;
 
   return (
-    <main className="mx-auto max-w-6xl space-y-4 p-6 text-white">
+    <main className="mx-auto max-w-6xl space-y-4 p-3 text-white sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Newly Up</h1>
@@ -65,7 +65,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
         </Link>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
         <Card title="Tasks">
           <div className="text-3xl font-semibold tabular-nums">{counts.done || 0}/{t.tasks.length}</div>
           <div className="text-xs text-white/40">done · {counts.doing || 0} in progress</div>
@@ -84,7 +84,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Facebook activity" right="memory/newlyup/fb-log.jsonl">
           {t.fb.length === 0 ? (
             <p className="text-sm text-white/40">Nothing yet.</p>
@@ -118,7 +118,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
             {t.tasks.filter((x) => x.id !== "freesite").map((x) => (
               <li key={x.id} className="flex items-start gap-2 text-sm">
                 <Badge label={x.status} style={STATUS_STYLE[x.status]} />
-                <span className={x.status === "done" ? "text-white/40 line-through" : "text-white/85"}>{x.title}</span>
+                <span className={`min-w-0 ${x.status === "done" ? "text-white/40 line-through" : "text-white/85"}`}>{x.title}</span>
                 {x.owner === "shib" ? <span className="ml-auto shrink-0 text-[10px] text-amber-300">YOU</span> : null}
               </li>
             ))}
@@ -143,7 +143,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
             {t.previews.map((p) => (
               <li key={p.slug} className="flex justify-between gap-2">
                 <a className="truncate underline decoration-white/20 hover:decoration-white" href={p.url} target="_blank" rel="noreferrer">{p.name}</a>
-                <span className="shrink-0 text-xs text-white/40">{p.lane} · exp {when(p.expires_at)}</span>
+                <span className="shrink-0 text-xs text-white/40 max-sm:hidden">{p.lane} · exp {when(p.expires_at)}</span>
               </li>
             ))}
           </ul>

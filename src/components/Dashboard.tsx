@@ -198,7 +198,7 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
   const note = snap.ideas?.note;
 
   return (
-    <main className="mx-auto max-w-[1500px] p-6">
+    <main className="mx-auto max-w-[1500px] p-3 sm:p-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-3">
@@ -209,42 +209,42 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
             collected {ago(data.generatedAt)} on {snap.root} · watchdog {ago(m?.generatedAt)}
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-4">
           <div className="text-right">
-            <div className="text-3xl font-semibold tabular-nums">{money(m?.totalMrr ?? 0)}</div>
+            <div className="text-2xl font-semibold tabular-nums sm:text-3xl">{money(m?.totalMrr ?? 0)}</div>
             <div className="text-xs text-white/40">portfolio MRR (subscriptions)</div>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-semibold tabular-nums">{money(m?.totalCash30d ?? 0)}</div>
+            <div className="text-2xl font-semibold tabular-nums sm:text-3xl">{money(m?.totalCash30d ?? 0)}</div>
             <div className="text-xs text-white/40">cash collected 30d</div>
           </div>
           <Link
             href="/distributionmax"
-            className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
+            className="rounded-lg border border-white/15 px-2.5 py-1.5 text-xs hover:bg-white/5 sm:px-3 sm:py-2 sm:text-sm"
           >
             DistributionMax
           </Link>
           <Link
             href="/research"
-            className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
+            className="rounded-lg border border-white/15 px-2.5 py-1.5 text-xs hover:bg-white/5 sm:px-3 sm:py-2 sm:text-sm"
           >
             Research
           </Link>
           <Link
             href="/newlyup"
-            className="rounded-lg border border-emerald-400/40 px-3 py-2 text-sm text-emerald-200 hover:bg-white/5"
+            className="rounded-lg border border-emerald-400/40 px-2.5 py-1.5 text-xs text-emerald-200 hover:bg-white/5 sm:px-3 sm:py-2 sm:text-sm"
           >
             Newly Up
           </Link>
           <Link
             href="/shopify"
-            className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
+            className="rounded-lg border border-white/15 px-2.5 py-1.5 text-xs hover:bg-white/5 sm:px-3 sm:py-2 sm:text-sm"
           >
             Shopify apps
           </Link>
           <button
             onClick={refresh}
-            className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5"
+            className="rounded-lg border border-white/15 px-2.5 py-1.5 text-xs hover:bg-white/5 sm:px-3 sm:py-2 sm:text-sm"
           >
             Refresh
           </button>

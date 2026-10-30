@@ -5,8 +5,8 @@ import path from "node:path";
 // including FB interactions"). Everything is read from files the project already writes:
 //   memory/priorities.json        — the freesite row + newlyup-* task rows (sprints keep them current)
 //   memory/newlyup/fb-log.jsonl   — one line per Facebook action (join, post, comment, DM, reply)
-//   freesite/data/prospects.json  — prospect pipeline (lanes)
-//   freesite/data/previews.json   — previews built (only after interest, plus the 5 proofs)
+//   freesite/data/freesite.db     — prospect pipeline + previews (SQLite since 2026-10-29, opened read-only);
+//                                   falls back to the frozen prospects.json/previews.json backup if it can't open
 //   memory/freesite-roadmap.md    — the Log section, newest lines shown
 
 export type FbEvent = {
@@ -40,6 +40,32 @@ function readJson<T>(p: string): T | null {
   }
 }
 
+type SqliteDb = { prepare(sql: string): { all(): Record<string, unknown>[]; get(): Record<string, unknown> }; close(): void };
+
+// getBuiltinModule keeps node:sqlite out of the Next bundler; null on any failure so the JSON backup is used.
+function readFreesiteDb(file: string): Pick<NewlyUpTab, "pipeline" | "previews"> | null {
+  if (!fs.existsSync(file)) return null;
+  let db: SqliteDb | null = null;
+  try {
+    const mod = (process as unknown as { getBuiltinModule?: (id: string) => { DatabaseSync: new (f: string, o: object) => SqliteDb } }).getBuiltinModule?.("node:sqlite");
+    if (!mod) return null;
+    db = new mod.DatabaseSync(file, { readOnly: true });
+    const lanes: Record<string, number> = {};
+    for (const r of db.prepare("select coalesce(lane,'unknown') lane, count(*) n from prospects group by 1").all()) lanes[String(r.lane)] = Number(r.n);
+    const total = Object.values(lanes).reduce((a, b) => a + b, 0);
+    const withEmail = Number(db.prepare("select count(*) n from prospects where lane in ('weaksite','nosite') and email is not null").get().n);
+    const previews = db
+      .prepare("select slug, name, lane, url, expires_at from previews order by built_at")
+      .all()
+      .map((p) => ({ slug: String(p.slug), name: String(p.name ?? ""), lane: String(p.lane ?? ""), url: String(p.url ?? ""), expires_at: String(p.expires_at) }));
+    return { pipeline: { total, lanes, withEmail }, previews };
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
 export function newlyupTab(ROOT: string): NewlyUpTab {
   const errs: string[] = [];
   const pri = readJson<{ items: (NewlyUpTask & Record<string, unknown>)[] }>(path.join(ROOT, "memory/priorities.json"));
@@ -60,21 +86,26 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
   }
 
   let pipeline: NewlyUpTab["pipeline"] = null;
-  const pros = readJson<unknown>(path.join(ROOT, "freesite/data/prospects.json"));
-  if (pros) {
-    const rows = (Array.isArray(pros) ? pros : Object.values((pros as { prospects?: object }).prospects || pros)) as Record<string, unknown>[];
-    const lanes: Record<string, number> = {};
-    let withEmail = 0;
-    for (const r of rows) {
-      const l = String(r.lane || "unknown");
-      lanes[l] = (lanes[l] || 0) + 1;
-      if ((l === "weaksite" || l === "nosite") && (r.email || (Array.isArray(r.emails) && r.emails.length))) withEmail++;
+  let previews: NewlyUpTab["previews"] = [];
+  const fromDb = readFreesiteDb(path.join(ROOT, "freesite/data/freesite.db"));
+  if (fromDb) {
+    ({ pipeline, previews } = fromDb);
+  } else {
+    const pros = readJson<unknown>(path.join(ROOT, "freesite/data/prospects.json"));
+    if (pros) {
+      const rows = (Array.isArray(pros) ? pros : Object.values((pros as { prospects?: object }).prospects || pros)) as Record<string, unknown>[];
+      const lanes: Record<string, number> = {};
+      let withEmail = 0;
+      for (const r of rows) {
+        const l = String(r.lane || "unknown");
+        lanes[l] = (lanes[l] || 0) + 1;
+        if ((l === "weaksite" || l === "nosite") && (r.email || (Array.isArray(r.emails) && r.emails.length))) withEmail++;
+      }
+      pipeline = { total: rows.length, lanes, withEmail };
     }
-    pipeline = { total: rows.length, lanes, withEmail };
+    const pv = readJson<Record<string, NewlyUpTab["previews"][number]>>(path.join(ROOT, "freesite/data/previews.json")) || {};
+    previews = Object.values(pv).map((p) => ({ slug: p.slug, name: p.name, lane: p.lane, url: p.url, expires_at: p.expires_at }));
   }
-
-  const pv = readJson<Record<string, NewlyUpTab["previews"][number]>>(path.join(ROOT, "freesite/data/previews.json")) || {};
-  const previews = Object.values(pv).map((p) => ({ slug: p.slug, name: p.name, lane: p.lane, url: p.url, expires_at: p.expires_at }));
 
   let log: string[] = [];
   try {

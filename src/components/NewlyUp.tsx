@@ -104,8 +104,8 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
           <div className="text-xs text-white/40">posts · {leads} leads</div>
         </Card>
         <Card title="Previews">
-          <div className="text-3xl font-semibold tabular-nums">{t.previews.length}</div>
-          <div className="text-xs text-white/40">built (only after interest)</div>
+          <div className="text-3xl font-semibold tabular-nums">{t.previews.filter((p) => p.lane === "fb-lead").length}</div>
+          <div className="text-xs text-white/40">for leads · {t.previews.filter((p) => p.lane !== "fb-lead").length} older cold-email samples</div>
         </Card>
       </div>
 

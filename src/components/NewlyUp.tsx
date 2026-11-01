@@ -20,6 +20,26 @@ const FB_STYLE: Record<string, string> = {
   lead: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
 };
 
+const STAGES = ["new", "replied", "preview-built", "preview-sent", "engaged", "price-quoted", "won", "later", "lost"];
+const STAGE_STYLE: Record<string, string> = {
+  new: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
+  replied: "bg-white/10 text-white/60 ring-white/15",
+  "preview-built": "bg-violet-500/15 text-violet-300 ring-violet-500/30",
+  "preview-sent": "bg-violet-500/15 text-violet-300 ring-violet-500/30",
+  engaged: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
+  "price-quoted": "bg-amber-500/15 text-amber-300 ring-amber-500/30",
+  won: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
+  later: "bg-white/10 text-white/40 ring-white/15",
+  lost: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
+};
+
+function day(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" });
+}
+
 function Card({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.02] p-4">
@@ -52,6 +72,10 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
   if (!t) return <main className="p-6 text-white/60">No Newly Up data in this snapshot yet.</main>;
   const counts = t.tasks.reduce<Record<string, number>>((a, x) => ((a[x.status] = (a[x.status] || 0) + 1), a), {});
   const leads = t.fb.filter((e) => e.kind === "lead" || e.kind === "comment" || e.kind === "dm").length;
+  // Older snapshots predate the lead/group tables.
+  const leadList = t.leads ?? [];
+  const groupList = t.groups ?? [];
+  const byStage = leadList.reduce<Record<string, typeof leadList>>((a, l) => ((a[l.stage] ||= []).push(l), a), {});
 
   return (
     <main className="mx-auto max-w-6xl space-y-4 p-3 text-white sm:p-6">
@@ -85,6 +109,80 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card title="Lead pipeline" right={`${leadList.length} leads · ${t.leadsSource === "jsonl" ? "fb-log.jsonl (DB unreadable)" : "freesite.db leads"}`}>
+          {leadList.length === 0 ? (
+            <p className="text-sm text-white/40">No leads yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {[...STAGES, ...Object.keys(byStage).filter((s) => !STAGES.includes(s))]
+                .filter((s) => byStage[s]?.length)
+                .map((s) => (
+                  <div key={s}>
+                    <div className="mb-1 flex items-center gap-2">
+                      <Badge label={s} style={STAGE_STYLE[s]} />
+                      <span className="text-[11px] text-white/30">{byStage[s].length}</span>
+                    </div>
+                    <ul className="space-y-2 border-l border-white/10 pl-3">
+                      {byStage[s].map((l) => (
+                        <li key={l.key} className="text-sm">
+                          <div className="flex flex-wrap items-baseline gap-x-2">
+                            <span className="font-medium text-white/90">{l.business}</span>
+                            {l.contact && l.contact !== l.business ? <span className="text-xs text-white/40">{l.contact}</span> : null}
+                            {l.preview_url ? (
+                              <a className="text-xs text-sky-300 underline decoration-sky-300/30 hover:decoration-sky-300" href={l.preview_url} target="_blank" rel="noreferrer">
+                                preview ↗
+                              </a>
+                            ) : null}
+                          </div>
+                          <div className="text-[11px] text-white/40">
+                            {l.source}
+                            {l.city ? ` · ${l.city}` : ""}
+                            {l.group ? ` · ${l.group}` : ""}
+                          </div>
+                          {l.next_action ? (
+                            <div className="mt-0.5 text-xs text-amber-200/80">
+                              → {l.next_action}
+                              {l.next_action_at ? <span className="ml-1 text-white/40">({when(l.next_action_at)})</span> : null}
+                            </div>
+                          ) : null}
+                          {l.last_at ? <div className="text-[11px] text-white/30">last: {when(l.last_at)}</div> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+            </div>
+          )}
+        </Card>
+
+        <Card title="Facebook groups" right={`${groupList.filter((g) => g.joined).length} joined · ${groupList.length} tracked`}>
+          {groupList.length === 0 ? (
+            <p className="text-sm text-white/40">No groups yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {groupList.map((g) => (
+                <li key={g.url} className="flex gap-2 text-sm">
+                  <Badge label={g.joined ? "joined" : "not joined"} style={g.joined ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" : undefined} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                      <a className="min-w-0 underline decoration-white/20 hover:decoration-white" href={g.url} target="_blank" rel="noreferrer">
+                        {g.name}
+                      </a>
+                      {g.leads ? <span className="shrink-0 text-xs font-semibold text-emerald-300">{g.leads} lead{g.leads === 1 ? "" : "s"}</span> : null}
+                    </div>
+                    <div className="text-[11px] text-white/40">
+                      {g.city || "?"}
+                      {g.members != null ? ` · ${g.members.toLocaleString("en-US")} members` : ""}
+                      {` · joined ${day(g.joined_at)} · posted ${day(g.posted_at)}`}
+                    </div>
+                    {g.note ? <div className="truncate text-[11px] text-white/30">{g.note}</div> : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
         <Card title="Facebook activity" right="memory/newlyup/fb-log.jsonl">
           {t.fb.length === 0 ? (
             <p className="text-sm text-white/40">Nothing yet.</p>

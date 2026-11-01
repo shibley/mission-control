@@ -83,7 +83,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Newly Up</h1>
-          <p className="text-sm text-white/50">Free AI-built site for local trades → $297/mo. Goal: 10 clients, then 50.</p>
+          <p className="text-sm text-white/50">Free AI-built site for any local business → $99–$297/mo. Goal: 100 sites, upside 1,000.</p>
         </div>
         <Link href="/" className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5">
           ← Dashboard

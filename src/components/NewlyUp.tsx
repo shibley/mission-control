@@ -71,9 +71,10 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
   const t = (initial.snapshot as { newlyupTab?: import("@/lib/newlyup").NewlyUpTab } | null)?.newlyupTab;
   if (!t) return <main className="p-6 text-white/60">No Newly Up data in this snapshot yet.</main>;
   const counts = t.tasks.reduce<Record<string, number>>((a, x) => ((a[x.status] = (a[x.status] || 0) + 1), a), {});
-  const leads = t.fb.filter((e) => e.kind === "lead" || e.kind === "comment" || e.kind === "dm").length;
   // Older snapshots predate the lead/group tables.
   const leadList = t.leads ?? [];
+  // Distinct people, not log lines: the fb log also records our own DMs and repeat comments (it read 17 for 3 leads).
+  const leads = leadList.length || new Set(t.fb.filter((e) => e.kind === "lead").map((e) => (e as { who?: string }).who)).size;
   const groupList = t.groups ?? [];
   const byStage = leadList.reduce<Record<string, typeof leadList>>((a, l) => ((a[l.stage] ||= []).push(l), a), {});
 
@@ -100,7 +101,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
         </Card>
         <Card title="Facebook">
           <div className="text-3xl font-semibold tabular-nums">{t.fb.filter((e) => e.kind === "post").length}</div>
-          <div className="text-xs text-white/40">posts · {leads} replies/leads</div>
+          <div className="text-xs text-white/40">posts · {leads} leads</div>
         </Card>
         <Card title="Previews">
           <div className="text-3xl font-semibold tabular-nums">{t.previews.length}</div>

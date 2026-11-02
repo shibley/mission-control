@@ -163,7 +163,18 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
             <ul className="space-y-2">
               {groupList.map((g) => (
                 <li key={g.url} className="flex gap-2 text-sm">
-                  <Badge label={g.joined ? "joined" : "not joined"} style={g.joined ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" : undefined} />
+                  <div className="flex shrink-0 flex-col items-start gap-1">
+                    <Badge label={g.joined ? "joined" : "not joined"} style={g.joined ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" : undefined} />
+                    {g.joined ? (
+                      /declined/i.test(g.note || "") ? (
+                        <Badge label="post declined" style="bg-red-500/15 text-red-300 ring-red-500/30" />
+                      ) : g.posted_at ? (
+                        <Badge label={`posted ${day(g.posted_at)}`} style="bg-sky-500/15 text-sky-300 ring-sky-500/30" />
+                      ) : (
+                        <Badge label="not posted" />
+                      )
+                    ) : null}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                       <a className="min-w-0 underline decoration-white/20 hover:decoration-white" href={g.url} target="_blank" rel="noreferrer">

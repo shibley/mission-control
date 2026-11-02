@@ -60,6 +60,7 @@ export type NewlyUpTab = {
   pipeline: { total: number; lanes: Record<string, number>; withEmail: number } | null;
   previews: { slug: string; name: string; lane: string; url: string; expires_at: string }[];
   log: string[];
+  features?: { n: string; idea: string; source: string; notes: string }[];
   links: { label: string; url: string }[];
   error: string | null;
 };
@@ -255,6 +256,18 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
     errs.push(`roadmap: ${(e as Error).message}`);
   }
 
+  let features: { n: string; idea: string; source: string; notes: string }[] = [];
+  try {
+    const fl = fs.readFileSync(path.join(ROOT, "memory/newlyup/feature-log.md"), "utf8");
+    features = fl
+      .split("\n")
+      .filter((l) => /^\|\s*\d+\s*\|/.test(l))
+      .map((l) => l.split("|").slice(1, -1).map((c) => c.trim().replace(/\*\*/g, "")))
+      .map(([n, idea, source, notes]) => ({ n, idea, source, notes }));
+  } catch (e) {
+    errs.push(`feature-log: ${(e as Error).message}`);
+  }
+
   return {
     tasks,
     leads,
@@ -264,11 +277,13 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
     pipeline,
     previews,
     log,
+    features,
     links: [
       { label: "newlyup.com", url: "https://newlyup.com" },
       { label: "About page", url: "https://newlyup.com/about" },
       { label: "Booking (Cal.com)", url: "https://cal.com/newlyup/website-chat" },
-      { label: "Stripe $297/mo link", url: "https://buy.stripe.com/8x27sLgmc9wL24ybq16J20g" },
+      { label: "Card-on-file page (/reserve)", url: "https://newlyup.com/reserve" },
+      { label: "No-pricing page (/welcome)", url: "https://newlyup.com/welcome" },
     ],
     error: errs.length ? errs.join("; ") : null,
   };

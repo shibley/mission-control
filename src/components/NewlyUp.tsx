@@ -156,6 +156,20 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
           )}
         </Card>
 
+        <Card title="Feature log (parked)" right={`${(t.features ?? []).length} ideas · not building until first closes`}>
+          {(t.features ?? []).length === 0 ? (
+            <p className="text-sm text-white/40">No parked features.</p>
+          ) : (
+            <ol className="space-y-2">
+              {(t.features ?? []).map((f) => (
+                <li key={f.n} className="text-sm">
+                  <div><span className="text-white/40 tabular-nums">{f.n}.</span> {f.idea}</div>
+                  <div className="text-[11px] text-white/40">{f.source}{f.notes ? ` · ${f.notes}` : ""}</div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Card>
         <Card title="Facebook groups" right={`${groupList.filter((g) => g.joined).length} joined · ${groupList.length} tracked`}>
           {groupList.length === 0 ? (
             <p className="text-sm text-white/40">No groups yet.</p>

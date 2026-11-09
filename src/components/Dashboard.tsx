@@ -237,6 +237,12 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
             Newly Up
           </Link>
           <Link
+            href="/traffic"
+            className="rounded-lg border border-sky-400/40 px-2.5 py-1.5 text-xs text-sky-200 hover:bg-white/5 sm:px-3 sm:py-2 sm:text-sm"
+          >
+            Traffic
+          </Link>
+          <Link
             href="/shopify"
             className="rounded-lg border border-white/15 px-2.5 py-1.5 text-xs hover:bg-white/5 sm:px-3 sm:py-2 sm:text-sm"
           >

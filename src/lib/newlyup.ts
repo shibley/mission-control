@@ -22,7 +22,12 @@ export type FbEvent = {
   note?: string;
 };
 
-export type NewlyUpTask = { id: string; title: string; owner: string; status: string };
+export type NewlyUpTask = {
+  id: string;
+  title: string;
+  owner: string;
+  status: string;
+};
 
 export type NewlyUpLead = {
   key: string;
@@ -45,6 +50,20 @@ export type NewlyUpLead = {
   /** Newest outbox thread_url for the lead, else the FB post it came from. */
   thread_url?: string | null;
   card_saved?: boolean;
+  /** Phase 2 (2026-11-18): their newest message (body = verbatim words; null body = only our log note of it) and ours. */
+  last_in?: LeadMsg | null;
+  last_out?: LeadMsg | null;
+  /** Snoozed on /newlyup: next_action_at is in the future and no message from them arrived since the snooze. */
+  snoozed?: boolean;
+};
+
+/** One lead_events row as the board shows it. direction: in = their words, out = ours, note = our log. */
+export type LeadMsg = {
+  at: string;
+  kind: string;
+  direction: string;
+  body: string | null;
+  text: string | null;
 };
 
 // freesite.db `outbox` (lib/outbox.mjs): drafts waiting for Shib's approval, plus recent sends/failures.
@@ -83,8 +102,18 @@ export type NewlyUpTab = {
   groups: NewlyUpGroup[];
   leadsSource: "db" | "jsonl";
   fb: FbEvent[];
-  pipeline: { total: number; lanes: Record<string, number>; withEmail: number } | null;
-  previews: { slug: string; name: string; lane: string; url: string; expires_at: string }[];
+  pipeline: {
+    total: number;
+    lanes: Record<string, number>;
+    withEmail: number;
+  } | null;
+  previews: {
+    slug: string;
+    name: string;
+    lane: string;
+    url: string;
+    expires_at: string;
+  }[];
   /** Open drafts + the last 7 days of sent/failed/skipped. Undefined on snapshots that predate the table. */
   outbox?: OutboxItem[];
   log: string[];
@@ -101,37 +130,127 @@ function readJson<T>(p: string): T | null {
   }
 }
 
-type SqliteDb = { prepare(sql: string): { all(): Record<string, unknown>[]; get(): Record<string, unknown> }; close(): void };
+type SqliteDb = {
+  prepare(sql: string): {
+    all(): Record<string, unknown>[];
+    get(): Record<string, unknown>;
+  };
+  close(): void;
+};
 
 // getBuiltinModule keeps node:sqlite out of the Next bundler; null on any failure so the JSON backup is used.
-function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews" | "outbox"> & { leads: NewlyUpLead[] | null; groups: NewlyUpGroup[] | null }) | null {
+function readFreesiteDb(
+  file: string,
+):
+  | (Pick<NewlyUpTab, "pipeline" | "previews" | "outbox"> & {
+      leads: NewlyUpLead[] | null;
+      groups: NewlyUpGroup[] | null;
+    })
+  | null {
   if (!fs.existsSync(file)) return null;
   let db: SqliteDb | null = null;
   try {
-    const mod = (process as unknown as { getBuiltinModule?: (id: string) => { DatabaseSync: new (f: string, o: object) => SqliteDb } }).getBuiltinModule?.("node:sqlite");
+    const mod = (
+      process as unknown as {
+        getBuiltinModule?: (id: string) => {
+          DatabaseSync: new (f: string, o: object) => SqliteDb;
+        };
+      }
+    ).getBuiltinModule?.("node:sqlite");
     if (!mod) return null;
     db = new mod.DatabaseSync(file, { readOnly: true });
     const lanes: Record<string, number> = {};
-    for (const r of db.prepare("select coalesce(lane,'unknown') lane, count(*) n from prospects group by 1").all()) lanes[String(r.lane)] = Number(r.n);
+    for (const r of db
+      .prepare(
+        "select coalesce(lane,'unknown') lane, count(*) n from prospects group by 1",
+      )
+      .all())
+      lanes[String(r.lane)] = Number(r.n);
     const total = Object.values(lanes).reduce((a, b) => a + b, 0);
-    const withEmail = Number(db.prepare("select count(*) n from prospects where lane in ('weaksite','nosite') and email is not null").get().n);
+    const withEmail = Number(
+      db
+        .prepare(
+          "select count(*) n from prospects where lane in ('weaksite','nosite') and email is not null",
+        )
+        .get().n,
+    );
     const previews = db
-      .prepare("select slug, name, lane, url, expires_at from previews order by built_at")
+      .prepare(
+        "select slug, name, lane, url, expires_at from previews order by built_at",
+      )
       .all()
-      .map((p) => ({ slug: String(p.slug), name: String(p.name ?? ""), lane: String(p.lane ?? ""), url: String(p.url ?? ""), expires_at: String(p.expires_at) }));
+      .map((p) => ({
+        slug: String(p.slug),
+        name: String(p.name ?? ""),
+        lane: String(p.lane ?? ""),
+        url: String(p.url ?? ""),
+        expires_at: String(p.expires_at),
+      }));
     const str = (v: unknown) => (v == null || v === "" ? null : String(v));
-    const hasOutbox = db.prepare("select count(*) n from sqlite_master where type='table' and name='outbox'").get().n === 1;
-    const hasLeads = db.prepare("select count(*) n from sqlite_master where type='table' and name in ('leads','fb_groups')").get().n === 2;
+    const msg = (v: unknown): LeadMsg | null => {
+      if (v == null) return null;
+      try {
+        const m = JSON.parse(String(v)) as LeadMsg;
+        return m && m.at
+          ? {
+              at: m.at,
+              kind: m.kind,
+              direction: m.direction ?? "",
+              body: m.body ?? null,
+              text: m.text ?? null,
+            }
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const hasOutbox =
+      db
+        .prepare(
+          "select count(*) n from sqlite_master where type='table' and name='outbox'",
+        )
+        .get().n === 1;
+    const hasLeads =
+      db
+        .prepare(
+          "select count(*) n from sqlite_master where type='table' and name in ('leads','fb_groups')",
+        )
+        .get().n === 2;
+    // lead_events.direction/body exist once any freesite script has opened the DB after 2026-11-18 (lib/db.mjs migrates).
+    const hasDir =
+      hasLeads &&
+      db
+        .prepare(
+          "select count(*) n from pragma_table_info('lead_events') where name='direction'",
+        )
+        .get().n === 1;
+    const IN = hasDir
+      ? "direction = 'in'"
+      : "kind in ('dm','reply','comment') and status in ('received','replied','lead-engaged','lead-positive','price-asked')";
+    const OUT = hasDir
+      ? "direction = 'out'"
+      : "kind in ('dm','reply','comment') and status = 'sent'";
+    const msgCols = hasDir
+      ? "at, kind, direction, body, text"
+      : "at, kind, null direction, null body, text";
+    const lastMsg = (dirSql: string) =>
+      `(select json_object('at', at, 'kind', kind, 'direction', direction, 'body', body, 'text', text) from (select ${msgCols} from lead_events where lead_id = l.id and ${dirSql} order by at desc, id desc limit 1))`;
     const leads = hasLeads
       ? db
           .prepare(
             `select l.*, p.url preview_url, e.at last_at, e.text last_text,
                exists(select 1 from clients c where c.place_id = p.place_id and c.status = 'active') live,
-               (select max(at) from lead_events where lead_id = l.id and kind in ('dm','reply','comment')
-                  and status in ('received','replied','lead-engaged','lead-positive','price-asked')) last_in_at,
-               (select max(at) from lead_events where lead_id = l.id and kind in ('dm','reply','comment') and status = 'sent') last_out_at,
+               (select max(at) from lead_events where lead_id = l.id and ${IN}) last_in_at,
+               (select max(at) from lead_events where lead_id = l.id and ${OUT}) last_out_at,
+               ${lastMsg(IN)} last_in_json,
+               ${lastMsg(OUT)} last_out_json,
+               (select max(at) from lead_events where lead_id = l.id and kind = 'note' and status = 'snoozed') snoozed_at,
                exists(select 1 from lead_events where lead_id = l.id and kind = 'card-saved') card_saved,
-               coalesce(${hasOutbox ? "(select o.thread_url from outbox o where o.lead_key = l.key and o.thread_url is not null order by o.id desc limit 1)" : "null"}, l.post_url) thread_url
+               coalesce(${
+                 hasOutbox
+                   ? "(select o.thread_url from outbox o where o.lead_key = l.key and o.thread_url is not null order by o.id desc limit 1)"
+                   : "null"
+               }, l.post_url) thread_url
              from leads l
              left join previews p on p.slug = l.preview_slug
              left join lead_events e on e.id = (select id from lead_events where lead_id = l.id order by at desc, id desc limit 1)
@@ -148,7 +267,11 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
             group: str(r.group_name),
             next_action: str(r.next_action),
             next_action_at: str(r.next_action_at),
-            preview_url: str(r.preview_url) ?? (r.preview_slug ? `https://newlyup.com/p/${r.preview_slug}` : null),
+            preview_url:
+              str(r.preview_url) ??
+              (r.preview_slug
+                ? `https://newlyup.com/p/${r.preview_slug}`
+                : null),
             last_at: str(r.last_at),
             last_text: str(r.last_text),
             live: Number(r.live) === 1,
@@ -156,6 +279,13 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
             last_out_at: str(r.last_out_at),
             thread_url: str(r.thread_url),
             card_saved: Number(r.card_saved) === 1,
+            last_in: msg(r.last_in_json),
+            last_out: msg(r.last_out_json),
+            snoozed:
+              !!r.next_action_at &&
+              Date.parse(String(r.next_action_at)) > Date.now() &&
+              !!r.snoozed_at &&
+              (!r.last_in_at || String(r.snoozed_at) >= String(r.last_in_at)),
           }))
       : null;
     const outbox = hasOutbox
@@ -185,7 +315,9 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
       : [];
     const groups = hasLeads
       ? db
-          .prepare("select * from fb_groups order by joined desc, coalesce(posted_at, joined_at, updated_at) desc")
+          .prepare(
+            "select * from fb_groups order by joined desc, coalesce(posted_at, joined_at, updated_at) desc",
+          )
           .all()
           .map((r) => ({
             city: str(r.city),
@@ -199,7 +331,13 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
             note: str(r.note),
           }))
       : null;
-    return { pipeline: { total, lanes, withEmail }, previews, outbox, leads, groups };
+    return {
+      pipeline: { total, lanes, withEmail },
+      previews,
+      outbox,
+      leads,
+      groups,
+    };
   } catch {
     return null;
   } finally {
@@ -209,18 +347,29 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
 
 // Fallback when freesite.db can't be read: one lead per distinct fb-log "who" (latest kind=lead status as the stage
 // hint), groups from join/post rows plus fb-groups.jsonl. Rough, but the card never goes blank.
-function leadsFromJsonl(ROOT: string, fb: FbEvent[]): { leads: NewlyUpLead[]; groups: NewlyUpGroup[] } {
+function leadsFromJsonl(
+  ROOT: string,
+  fb: FbEvent[],
+): { leads: NewlyUpLead[]; groups: NewlyUpGroup[] } {
   const byWho = new Map<string, NewlyUpLead>();
   for (const e of [...fb].sort((a, b) => a.at.localeCompare(b.at))) {
     if (e.kind !== "lead" || !e.who) continue;
-    const name = e.who.split(" / ").pop()!.replace(/\s*\(.*\)$/, "");
+    const name = e.who
+      .split(" / ")
+      .pop()!
+      .replace(/\s*\(.*\)$/, "");
     const k = e.who.split(" / ")[0].toLowerCase(); // the person, so "X" and "X / Their Biz LLC" merge
     const prev = byWho.get(k);
-    const url = e.note?.match(/https:\/\/newlyup\.com\/p\/[\w-]+/)?.[0] ?? prev?.preview_url ?? null;
+    const url =
+      e.note?.match(/https:\/\/newlyup\.com\/p\/[\w-]+/)?.[0] ??
+      prev?.preview_url ??
+      null;
     byWho.set(k, {
       key: k,
-      business: e.who.includes(" / ") ? name : (prev?.business ?? name),
-      contact: e.who.includes(" / ") ? e.who.split(" / ")[0] : (prev?.contact ?? null),
+      business: e.who.includes(" / ") ? name : prev?.business ?? name,
+      contact: e.who.includes(" / ")
+        ? e.who.split(" / ")[0]
+        : prev?.contact ?? null,
       source: (e as FbEvent & { source?: string }).source || "fb-comment",
       city: null,
       stage: e.status || "new",
@@ -235,18 +384,42 @@ function leadsFromJsonl(ROOT: string, fb: FbEvent[]): { leads: NewlyUpLead[]; gr
   const groups = new Map<string, NewlyUpGroup>();
   for (const e of [...fb].sort((a, b) => a.at.localeCompare(b.at))) {
     if ((e.kind !== "join" && e.kind !== "post") || !e.group_url) continue;
-    const g = groups.get(e.group_url) ?? { city: null, name: e.group || e.group_url, url: e.group_url, members: null, joined: false, joined_at: null, posted_at: null, leads: 0, note: null };
-    if (e.kind === "join" && e.status === "joined") Object.assign(g, { joined: true, joined_at: e.at });
+    const g = groups.get(e.group_url) ?? {
+      city: null,
+      name: e.group || e.group_url,
+      url: e.group_url,
+      members: null,
+      joined: false,
+      joined_at: null,
+      posted_at: null,
+      leads: 0,
+      note: null,
+    };
+    if (e.kind === "join" && e.status === "joined")
+      Object.assign(g, { joined: true, joined_at: e.at });
     if (e.kind === "post" && e.status !== "declined") g.posted_at ??= e.at;
     g.note = `${e.kind} ${e.status ?? ""}`.trim();
     groups.set(e.group_url, g);
   }
   try {
-    for (const l of fs.readFileSync(path.join(ROOT, "memory/newlyup/fb-groups.jsonl"), "utf8").split("\n").filter(Boolean)) {
+    for (const l of fs
+      .readFileSync(path.join(ROOT, "memory/newlyup/fb-groups.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)) {
       try {
         const c = JSON.parse(l) as Record<string, unknown>;
         if (!c.url) continue;
-        const g = groups.get(String(c.url)) ?? { city: null, name: String(c.name || c.url), url: String(c.url), members: null, joined: false, joined_at: null, posted_at: null, leads: 0, note: null };
+        const g = groups.get(String(c.url)) ?? {
+          city: null,
+          name: String(c.name || c.url),
+          url: String(c.url),
+          members: null,
+          joined: false,
+          joined_at: null,
+          posted_at: null,
+          leads: 0,
+          note: null,
+        };
         if (c.city) g.city = String(c.city);
         if (c.members != null) g.members = Number(c.members) || null;
         if (c.joined) g.joined = true;
@@ -256,16 +429,24 @@ function leadsFromJsonl(ROOT: string, fb: FbEvent[]): { leads: NewlyUpLead[]; gr
     }
   } catch {}
   const leads = [...byWho.values()].reverse();
-  for (const g of groups.values()) g.leads = leads.filter((l) => l.group === g.name).length;
+  for (const g of groups.values())
+    g.leads = leads.filter((l) => l.group === g.name).length;
   return { leads, groups: [...groups.values()] };
 }
 
 export function newlyupTab(ROOT: string): NewlyUpTab {
   const errs: string[] = [];
-  const pri = readJson<{ items: (NewlyUpTask & Record<string, unknown>)[] }>(path.join(ROOT, "memory/priorities.json"));
+  const pri = readJson<{ items: (NewlyUpTask & Record<string, unknown>)[] }>(
+    path.join(ROOT, "memory/priorities.json"),
+  );
   const tasks = (pri?.items || [])
     .filter((i) => String(i.id).startsWith("newlyup-") || i.id === "freesite")
-    .map((i) => ({ id: String(i.id), title: String(i.title).replace(/^↳ Newly Up: /, ""), owner: String(i.owner), status: String(i.status) }));
+    .map((i) => ({
+      id: String(i.id),
+      title: String(i.title).replace(/^↳ Newly Up: /, ""),
+      owner: String(i.owner),
+      status: String(i.status),
+    }));
 
   let fb: FbEvent[] = [];
   try {
@@ -285,31 +466,54 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
   const fromDb = readFreesiteDb(path.join(ROOT, "freesite/data/freesite.db"));
   let leads = fromDb?.leads ?? null;
   let groups = fromDb?.groups ?? null;
-  const leadsSource: NewlyUpTab["leadsSource"] = leads && groups ? "db" : "jsonl";
+  const leadsSource: NewlyUpTab["leadsSource"] =
+    leads && groups ? "db" : "jsonl";
   if (!leads || !groups) ({ leads, groups } = leadsFromJsonl(ROOT, fb));
   if (fromDb) {
     ({ pipeline, previews } = fromDb);
     outbox = fromDb.outbox ?? [];
   } else {
-    const pros = readJson<unknown>(path.join(ROOT, "freesite/data/prospects.json"));
+    const pros = readJson<unknown>(
+      path.join(ROOT, "freesite/data/prospects.json"),
+    );
     if (pros) {
-      const rows = (Array.isArray(pros) ? pros : Object.values((pros as { prospects?: object }).prospects || pros)) as Record<string, unknown>[];
+      const rows = (
+        Array.isArray(pros)
+          ? pros
+          : Object.values((pros as { prospects?: object }).prospects || pros)
+      ) as Record<string, unknown>[];
       const lanes: Record<string, number> = {};
       let withEmail = 0;
       for (const r of rows) {
         const l = String(r.lane || "unknown");
         lanes[l] = (lanes[l] || 0) + 1;
-        if ((l === "weaksite" || l === "nosite") && (r.email || (Array.isArray(r.emails) && r.emails.length))) withEmail++;
+        if (
+          (l === "weaksite" || l === "nosite") &&
+          (r.email || (Array.isArray(r.emails) && r.emails.length))
+        )
+          withEmail++;
       }
       pipeline = { total: rows.length, lanes, withEmail };
     }
-    const pv = readJson<Record<string, NewlyUpTab["previews"][number]>>(path.join(ROOT, "freesite/data/previews.json")) || {};
-    previews = Object.values(pv).map((p) => ({ slug: p.slug, name: p.name, lane: p.lane, url: p.url, expires_at: p.expires_at }));
+    const pv =
+      readJson<Record<string, NewlyUpTab["previews"][number]>>(
+        path.join(ROOT, "freesite/data/previews.json"),
+      ) || {};
+    previews = Object.values(pv).map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      lane: p.lane,
+      url: p.url,
+      expires_at: p.expires_at,
+    }));
   }
 
   let log: string[] = [];
   try {
-    const md = fs.readFileSync(path.join(ROOT, "memory/freesite-roadmap.md"), "utf8");
+    const md = fs.readFileSync(
+      path.join(ROOT, "memory/freesite-roadmap.md"),
+      "utf8",
+    );
     const i = md.indexOf("## Log");
     if (i >= 0) {
       log = md
@@ -324,13 +528,22 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
     errs.push(`roadmap: ${(e as Error).message}`);
   }
 
-  let features: { n: string; idea: string; source: string; notes: string }[] = [];
+  let features: { n: string; idea: string; source: string; notes: string }[] =
+    [];
   try {
-    const fl = fs.readFileSync(path.join(ROOT, "memory/newlyup/feature-log.md"), "utf8");
+    const fl = fs.readFileSync(
+      path.join(ROOT, "memory/newlyup/feature-log.md"),
+      "utf8",
+    );
     features = fl
       .split("\n")
       .filter((l) => /^\|\s*\d+\s*\|/.test(l))
-      .map((l) => l.split("|").slice(1, -1).map((c) => c.trim().replace(/\*\*/g, "")))
+      .map((l) =>
+        l
+          .split("|")
+          .slice(1, -1)
+          .map((c) => c.trim().replace(/\*\*/g, "")),
+      )
       .map(([n, idea, source, notes]) => ({ n, idea, source, notes }));
   } catch (e) {
     errs.push(`feature-log: ${(e as Error).message}`);
@@ -350,9 +563,18 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
     links: [
       { label: "newlyup.com", url: "https://newlyup.com" },
       { label: "About page", url: "https://newlyup.com/about" },
-      { label: "Booking (Cal.com)", url: "https://cal.com/newlyup/website-chat" },
-      { label: "Card-on-file page (/reserve)", url: "https://newlyup.com/reserve" },
-      { label: "No-pricing page (/welcome)", url: "https://newlyup.com/welcome" },
+      {
+        label: "Booking (Cal.com)",
+        url: "https://cal.com/newlyup/website-chat",
+      },
+      {
+        label: "Card-on-file page (/reserve)",
+        url: "https://newlyup.com/reserve",
+      },
+      {
+        label: "No-pricing page (/welcome)",
+        url: "https://newlyup.com/welcome",
+      },
     ],
     error: errs.length ? errs.join("; ") : null,
   };

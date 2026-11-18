@@ -142,8 +142,8 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
       {tab === "board" ? (
         <div className="space-y-4">
           {/* Interactive only when served straight off this Mac; the Vercel copy is the pushed snapshot (read-only). */}
+          <LeadBoard leads={leadList} outbox={t.outbox ?? []} interactive={initial.source === "local"} />
           <OutboxPanel outbox={t.outbox ?? []} leads={leadList} interactive={initial.source === "local"} />
-          <LeadBoard leads={leadList} outbox={t.outbox ?? []} />
         </div>
       ) : null}
 

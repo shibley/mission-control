@@ -67,7 +67,7 @@ function DraftCard({ item, lead, interactive }: { item: OutboxItem; lead?: Newly
   }
 
   return (
-    <li id={`outbox-${item.id}`} className="scroll-mt-4 rounded-lg border border-white/10 bg-black/20 p-3">
+    <li id={`outbox-${item.id}`} className="min-w-0 scroll-mt-4 rounded-lg border border-white/10 bg-black/20 p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Pill label={item.status} style={STATUS_STYLE[item.status]} />
         <span className="font-medium text-white/90">{lead?.business || item.lead_key || "(no lead)"}</span>
@@ -147,7 +147,7 @@ export function OutboxPanel({ outbox, leads, interactive }: { outbox: OutboxItem
   const done = outbox.filter((o) => !OPEN.includes(o.status));
   const [showDone, setShowDone] = useState(false);
   return (
-    <section className="rounded-xl border border-amber-400/20 bg-amber-500/[0.03] p-4">
+    <section className="min-w-0 rounded-xl border border-amber-400/20 bg-amber-500/[0.03] p-4">
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold tracking-wide text-white/80 uppercase">
           Outbox <span className="text-amber-300">{open.filter((o) => o.status === "pending").length} waiting</span>
@@ -180,7 +180,7 @@ export function OutboxPanel({ outbox, leads, interactive }: { outbox: OutboxItem
 
 function LeadCard({ l, draft }: { l: NewlyUpLead; draft?: OutboxItem }) {
   return (
-    <li className="rounded-lg border border-white/10 bg-white/[0.03] p-2.5 text-sm">
+    <li className="min-w-0 rounded-lg border border-white/10 bg-white/[0.03] p-2.5 text-sm [overflow-wrap:anywhere]">
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 font-medium break-words text-white/90">{l.business}</span>
         {draft ? (
@@ -203,8 +203,21 @@ function LeadCard({ l, draft }: { l: NewlyUpLead; draft?: OutboxItem }) {
           </a>
         ) : null}
       </div>
-      {l.next_action ? <div className="mt-1 line-clamp-2 text-[11px] text-amber-200/70">→ {l.next_action}</div> : null}
+      {l.next_action ? <div className="mt-1 text-[11px] text-amber-200/70 sm:line-clamp-2">→ {l.next_action}</div> : null}
     </li>
+  );
+}
+
+const URGENT: Column[] = ["Replied", "Price quoted"];
+
+function StageList({ list, drafts }: { list: NewlyUpLead[]; drafts: Map<string, OutboxItem> }) {
+  return (
+    <ul className="space-y-2">
+      {list.length === 0 ? <li className="text-[11px] text-white/25">—</li> : null}
+      {list.map((l) => (
+        <LeadCard key={l.key} l={l} draft={drafts.get(l.key)} />
+      ))}
+    </ul>
   );
 }
 
@@ -218,20 +231,46 @@ export function LeadBoard({ leads, outbox }: { leads: NewlyUpLead[]; outbox: Out
     cols.set(c, [...(cols.get(c) || []), l]);
   }
   const lost = cols.get("Lost / Later") || [];
+  const all = [...COLUMNS, "Lost / Later" as const];
+  // Phones get stacked sections; the ones needing action (a reply, a quote out, a draft waiting) go first.
+  const needsAction = (c: Column) => URGENT.includes(c) || (cols.get(c) || []).some((l) => drafts.has(l.key));
+  const stacked = [...all.filter((c) => c !== "Lost / Later" && needsAction(c)), ...all.filter((c) => c !== "Lost / Later" && !needsAction(c)), "Lost / Later" as const];
   return (
-    <section className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <section className="min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold tracking-wide text-white/80 uppercase">Lead board</h2>
         <span className="text-xs text-white/40">
-          {leads.length - lost.length} open · {drafts.size} with a draft waiting · swipe →
+          {leads.length - lost.length} open · {drafts.size} with a draft waiting<span className="max-sm:hidden"> · scroll →</span>
         </span>
       </header>
-      <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2">
-        {[...COLUMNS, "Lost / Later" as const].map((c) => {
+
+      <div className="space-y-2 sm:hidden">
+        {stacked.map((c) => {
+          const list = cols.get(c) || [];
+          const urgent = c !== "Lost / Later" && needsAction(c) && list.length > 0;
+          return (
+            <details key={c} open={list.length > 0 && c !== "Lost / Later"} className="group rounded-lg border border-white/10 bg-black/10">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
+                <span className={`text-sm font-semibold ${urgent ? "text-amber-200" : "text-white/75"}`}>
+                  <span className="mr-1.5 inline-block text-white/40 transition-transform group-open:rotate-90">›</span>
+                  {c}
+                </span>
+                <span className="text-xs text-white/40 tabular-nums">{list.length}</span>
+              </summary>
+              <div className="px-2 pb-2">
+                <StageList list={list} drafts={drafts} />
+              </div>
+            </details>
+          );
+        })}
+      </div>
+
+      <div className="-mx-4 hidden snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 sm:flex">
+        {all.map((c) => {
           const list = cols.get(c) || [];
           const collapsed = c === "Lost / Later" && !showLost;
           return (
-            <div key={c} className={`flex shrink-0 snap-start flex-col ${collapsed ? "w-28" : "w-[78vw] sm:w-60"}`}>
+            <div key={c} className={`flex shrink-0 snap-start flex-col ${collapsed ? "w-28" : "w-60"}`}>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-white/70">{c}</span>
                 {c === "Lost / Later" ? (
@@ -242,14 +281,7 @@ export function LeadBoard({ leads, outbox }: { leads: NewlyUpLead[]; outbox: Out
                   <span className="text-[11px] text-white/30 tabular-nums">{list.length}</span>
                 )}
               </div>
-              {collapsed ? null : (
-                <ul className="space-y-2">
-                  {list.length === 0 ? <li className="text-[11px] text-white/25">—</li> : null}
-                  {list.map((l) => (
-                    <LeadCard key={l.key} l={l} draft={drafts.get(l.key)} />
-                  ))}
-                </ul>
-              )}
+              {collapsed ? null : <StageList list={list} drafts={drafts} />}
             </div>
           );
         })}

@@ -82,7 +82,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
   const byStage = leadList.reduce<Record<string, typeof leadList>>((a, l) => ((a[l.stage] ||= []).push(l), a), {});
 
   return (
-    <main className="mx-auto max-w-6xl space-y-4 p-3 text-white sm:p-6">
+    <main className="mx-auto max-w-6xl space-y-4 p-3 text-white [overflow-wrap:anywhere] sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Newly Up</h1>

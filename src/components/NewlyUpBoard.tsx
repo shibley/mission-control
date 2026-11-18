@@ -208,7 +208,99 @@ function LeadCard({ l, draft }: { l: NewlyUpLead; draft?: OutboxItem }) {
   );
 }
 
-const URGENT: Column[] = ["Replied", "Price quoted"];
+function ago(iso?: string | null) {
+  if (!iso) return "";
+  const m = (Date.now() - new Date(iso).getTime()) / 60000;
+  if (!Number.isFinite(m)) return "";
+  if (m < 60) return `${Math.max(1, Math.round(m))}m`;
+  if (m < 60 * 24) return `${Math.round(m / 60)}h`;
+  if (m < 60 * 24 * 60) return `${Math.round(m / 1440)}d`;
+  return `${Math.round(m / 43200)}mo`;
+}
+
+// Their last message is newer than ours (or we never answered).
+const unanswered = (l: NewlyUpLead) => !!l.last_in_at && (!l.last_out_at || l.last_in_at > l.last_out_at);
+const byRecent = (a: NewlyUpLead, b: NewlyUpLead) => (b.last_at || "").localeCompare(a.last_at || "");
+
+function why(l: NewlyUpLead, draft?: OutboxItem) {
+  if (draft) return "draft waiting";
+  if (unanswered(l)) return "they replied";
+  return "go-live step";
+}
+
+function LeadRow({ l, draft, open, onToggle, reason }: { l: NewlyUpLead; draft?: OutboxItem; open: boolean; onToggle: () => void; reason?: string }) {
+  const card = l.card_saved || boardColumn(l) === "Card saved / won";
+  const sub = [l.contact && l.contact !== l.business ? l.contact : null, l.city].filter(Boolean).join(" · ") || reason || l.source;
+  return (
+    <li className={`min-w-0 ${open ? "bg-white/[0.04]" : ""}`}>
+      <button onClick={onToggle} aria-expanded={open} className="flex min-h-12 w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left active:bg-white/5">
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-white/90">{l.business}</span>
+          <span className="block truncate text-[11px] text-white/40">{sub}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {unanswered(l) ? <span title="replied since our last message" className="h-2 w-2 rounded-full bg-sky-400" /> : null}
+          {draft ? <span className="rounded bg-amber-500/20 px-1 py-px text-[10px] font-semibold text-amber-200 uppercase ring-1 ring-amber-500/40">draft</span> : null}
+          {card ? <span className="rounded bg-emerald-500/20 px-1 py-px text-[10px] font-semibold text-emerald-200 uppercase ring-1 ring-emerald-500/40">card</span> : null}
+          <span suppressHydrationWarning className="w-7 text-right text-[11px] text-white/40 tabular-nums">{ago(l.last_at)}</span>
+        </span>
+      </button>
+      {open ? (
+        <div className="space-y-1.5 px-3 pb-3 text-xs [overflow-wrap:anywhere]">
+          {l.last_text ? (
+            <div className="rounded-md bg-black/20 p-2 text-white/70">
+              <div className="mb-0.5 text-[10px] text-white/35 uppercase">last message · {when(l.last_at)}</div>
+              {l.last_text}
+            </div>
+          ) : null}
+          {l.next_action ? (
+            <div className="text-amber-200/80">
+              → {l.next_action}
+              {l.next_action_at ? <span className="ml-1 text-white/40">({when(l.next_action_at)})</span> : null}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {draft ? (
+              <a href={`#outbox-${draft.id}`} className="text-amber-200 underline decoration-amber-200/30">
+                draft #{draft.id} ↑
+              </a>
+            ) : null}
+            {l.preview_url ? (
+              <a className="text-sky-300 underline decoration-sky-300/30" href={l.preview_url} target="_blank" rel="noreferrer">
+                preview ↗
+              </a>
+            ) : null}
+            {l.thread_url ? (
+              <a className="text-sky-300 underline decoration-sky-300/30" href={l.thread_url} target="_blank" rel="noreferrer">
+                thread ↗
+              </a>
+            ) : null}
+          </div>
+          <div className="text-[11px] text-white/35">
+            {l.stage} · {l.source}
+            {l.group ? ` · ${l.group}` : ""}
+            {l.last_in_at ? ` · them ${when(l.last_in_at)}` : ""}
+            {l.last_out_at ? ` · us ${when(l.last_out_at)}` : ""}
+          </div>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function Section({ title, count, open, onToggle, accent, children }: { title: string; count: number; open: boolean; onToggle: () => void; accent?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`overflow-hidden rounded-lg border ${accent ? "border-amber-400/25 bg-amber-500/[0.04]" : "border-white/10 bg-black/10"}`}>
+      <button onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
+        <span className={`inline-block w-3 text-white/40 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+        <span className={`min-w-0 flex-1 truncate text-sm font-semibold ${accent ? "text-amber-200" : "text-white/75"}`}>
+          {title} <span className="font-normal text-white/40 tabular-nums">· {count}</span>
+        </span>
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
 
 function StageList({ list, drafts }: { list: NewlyUpLead[]; drafts: Map<string, OutboxItem> }) {
   return (
@@ -223,6 +315,10 @@ function StageList({ list, drafts }: { list: NewlyUpLead[]; drafts: Map<string, 
 
 export function LeadBoard({ leads, outbox }: { leads: NewlyUpLead[]; outbox: OutboxItem[] }) {
   const [showLost, setShowLost] = useState(false);
+  // Phones: one expanded row and any number of open sections; "Needs you" starts open, stages start closed.
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const [openSecs, setOpenSecs] = useState<Set<string>>(() => new Set(["needs"]));
+  const toggleSec = (k: string) => setOpenSecs((s) => (s.has(k) ? new Set([...s].filter((x) => x !== k)) : new Set([...s, k])));
   const drafts = new Map<string, OutboxItem>();
   for (const o of outbox) if (o.status === "pending" && o.lead_key && !drafts.has(o.lead_key)) drafts.set(o.lead_key, o);
   const cols = new Map<Column, NewlyUpLead[]>();
@@ -232,11 +328,19 @@ export function LeadBoard({ leads, outbox }: { leads: NewlyUpLead[]; outbox: Out
   }
   const lost = cols.get("Lost / Later") || [];
   const all = [...COLUMNS, "Lost / Later" as const];
-  // Phones get stacked sections; the ones needing action (a reply, a quote out, a draft waiting) go first.
-  const needsAction = (c: Column) => URGENT.includes(c) || (cols.get(c) || []).some((l) => drafts.has(l.key));
-  const stacked = [...all.filter((c) => c !== "Lost / Later" && needsAction(c)), ...all.filter((c) => c !== "Lost / Later" && !needsAction(c)), "Lost / Later" as const];
+  const needs = leads
+    .filter((l) => drafts.has(l.key) || (boardColumn(l) !== "Lost / Later" && unanswered(l)) || boardColumn(l) === "Card saved / won")
+    .sort(byRecent);
+  const rows = (prefix: string, list: NewlyUpLead[], reason?: (l: NewlyUpLead) => string) => (
+    <ul className="divide-y divide-white/5 border-t border-white/5">
+      {list.map((l) => {
+        const k = `${prefix}:${l.key}`;
+        return <LeadRow key={k} l={l} draft={drafts.get(l.key)} open={openRow === k} onToggle={() => setOpenRow((r) => (r === k ? null : k))} reason={reason?.(l)} />;
+      })}
+    </ul>
+  );
   return (
-    <section className="min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <section className="min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-3 sm:p-4">
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold tracking-wide text-white/80 uppercase">Lead board</h2>
         <span className="text-xs text-white/40">
@@ -245,22 +349,16 @@ export function LeadBoard({ leads, outbox }: { leads: NewlyUpLead[]; outbox: Out
       </header>
 
       <div className="space-y-2 sm:hidden">
-        {stacked.map((c) => {
-          const list = cols.get(c) || [];
-          const urgent = c !== "Lost / Later" && needsAction(c) && list.length > 0;
+        <Section title="Needs you" count={needs.length} accent open={openSecs.has("needs")} onToggle={() => toggleSec("needs")}>
+          {needs.length ? rows("needs", needs, (l) => why(l, drafts.get(l.key))) : <p className="border-t border-white/5 px-3 py-2.5 text-xs text-white/40">Nothing needs you right now</p>}
+        </Section>
+        {all.map((c) => {
+          const list = [...(cols.get(c) || [])].sort(byRecent);
+          if (!list.length) return null;
           return (
-            <details key={c} open={list.length > 0 && c !== "Lost / Later"} className="group rounded-lg border border-white/10 bg-black/10">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
-                <span className={`text-sm font-semibold ${urgent ? "text-amber-200" : "text-white/75"}`}>
-                  <span className="mr-1.5 inline-block text-white/40 transition-transform group-open:rotate-90">›</span>
-                  {c}
-                </span>
-                <span className="text-xs text-white/40 tabular-nums">{list.length}</span>
-              </summary>
-              <div className="px-2 pb-2">
-                <StageList list={list} drafts={drafts} />
-              </div>
-            </details>
+            <Section key={c} title={c} count={list.length} open={openSecs.has(c)} onToggle={() => toggleSec(c)}>
+              {rows(c, list)}
+            </Section>
           );
         })}
       </div>

@@ -85,15 +85,30 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
     <main className="mx-auto max-w-6xl space-y-4 p-3 text-white [overflow-wrap:anywhere] sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Newly Up</h1>
-          <p className="text-sm text-white/50">Free AI-built site for any local business → $99–$297/mo. Goal: 100 sites, upside 1,000.</p>
+          <h1 className="text-xl font-semibold sm:text-2xl">Newly Up</h1>
+          <p className="text-sm text-white/50 max-sm:text-xs">Free AI-built site for any local business → $99–$297/mo. Goal: 100 sites, upside 1,000.</p>
         </div>
         <Link href="/" className="rounded-lg border border-white/15 px-3 py-2 text-sm hover:bg-white/5">
           ← Dashboard
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+      {/* Phones: one compact strip instead of four cards. */}
+      <div className="grid grid-cols-4 divide-x divide-white/10 rounded-lg border border-white/10 bg-white/[0.02] text-center sm:hidden">
+        {[
+          ["Tasks", `${counts.done || 0}/${t.tasks.length}`],
+          ["Prospects", (t.pipeline?.lanes.weaksite || 0) + (t.pipeline?.lanes.nosite || 0)],
+          ["FB posts", t.fb.filter((e) => e.kind === "post").length],
+          ["Previews", t.previews.filter((p) => p.lane === "fb-lead").length],
+        ].map(([k, v]) => (
+          <div key={k} className="min-w-0 px-1 py-1.5">
+            <div className="text-base leading-tight font-semibold tabular-nums">{v}</div>
+            <div className="truncate text-[10px] text-white/40 uppercase">{k}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden grid-cols-4 gap-4 sm:grid">
         <Card title="Tasks">
           <div className="text-3xl font-semibold tabular-nums">{counts.done || 0}/{t.tasks.length}</div>
           <div className="text-xs text-white/40">done · {counts.doing || 0} in progress</div>

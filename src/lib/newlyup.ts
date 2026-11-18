@@ -39,6 +39,12 @@ export type NewlyUpLead = {
   last_text: string | null;
   /** True when a clients row (paying, active) hangs off this lead's preview — the "Live" board column. */
   live?: boolean;
+  /** Latest message event from them / from us (lead_events dm|reply|comment). Optional: older snapshots lack them. */
+  last_in_at?: string | null;
+  last_out_at?: string | null;
+  /** Newest outbox thread_url for the lead, else the FB post it came from. */
+  thread_url?: string | null;
+  card_saved?: boolean;
 };
 
 // freesite.db `outbox` (lib/outbox.mjs): drafts waiting for Shib's approval, plus recent sends/failures.
@@ -114,12 +120,19 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
       .all()
       .map((p) => ({ slug: String(p.slug), name: String(p.name ?? ""), lane: String(p.lane ?? ""), url: String(p.url ?? ""), expires_at: String(p.expires_at) }));
     const str = (v: unknown) => (v == null || v === "" ? null : String(v));
+    const hasOutbox = db.prepare("select count(*) n from sqlite_master where type='table' and name='outbox'").get().n === 1;
     const hasLeads = db.prepare("select count(*) n from sqlite_master where type='table' and name in ('leads','fb_groups')").get().n === 2;
     const leads = hasLeads
       ? db
           .prepare(
             `select l.*, p.url preview_url, e.at last_at, e.text last_text,
-               exists(select 1 from clients c where c.place_id = p.place_id and c.status = 'active') live from leads l
+               exists(select 1 from clients c where c.place_id = p.place_id and c.status = 'active') live,
+               (select max(at) from lead_events where lead_id = l.id and kind in ('dm','reply','comment')
+                  and status in ('received','replied','lead-engaged','lead-positive','price-asked')) last_in_at,
+               (select max(at) from lead_events where lead_id = l.id and kind in ('dm','reply','comment') and status = 'sent') last_out_at,
+               exists(select 1 from lead_events where lead_id = l.id and kind = 'card-saved') card_saved,
+               coalesce(${hasOutbox ? "(select o.thread_url from outbox o where o.lead_key = l.key and o.thread_url is not null order by o.id desc limit 1)" : "null"}, l.post_url) thread_url
+             from leads l
              left join previews p on p.slug = l.preview_slug
              left join lead_events e on e.id = (select id from lead_events where lead_id = l.id order by at desc, id desc limit 1)
              order by coalesce(e.at, l.updated_at) desc`,
@@ -139,9 +152,12 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
             last_at: str(r.last_at),
             last_text: str(r.last_text),
             live: Number(r.live) === 1,
+            last_in_at: str(r.last_in_at),
+            last_out_at: str(r.last_out_at),
+            thread_url: str(r.thread_url),
+            card_saved: Number(r.card_saved) === 1,
           }))
       : null;
-    const hasOutbox = db.prepare("select count(*) n from sqlite_master where type='table' and name='outbox'").get().n === 1;
     const outbox = hasOutbox
       ? db
           .prepare(

@@ -559,11 +559,18 @@ function LeadDetail({
               error?: string;
             })
           : {};
-        if (j.status === "done" || j.status === "failed") {
+        if (
+          j.status === "done" ||
+          j.status === "failed" ||
+          j.status === "superseded"
+        ) {
           if (poll.current) clearInterval(poll.current);
           setJob(null);
           if (j.status === "failed")
             setErr(`redraft failed: ${j.error || "unknown"}`);
+          // freesite nu-redraft drops a draft when a reply was sent/approved while it was being written.
+          else if (j.status === "superseded")
+            setErr(`draft dropped: ${j.error || "a reply already went out"}`);
           else if (!useDefault) setIns("");
           router.refresh();
         }
@@ -939,6 +946,12 @@ export function LeadBoard({
   for (const o of outbox)
     if (o.status === "pending" && o.lead_key && !drafts.has(o.lead_key))
       drafts.set(o.lead_key, o);
+  // Leads with a reply already approved/scheduled/sending: never autodrafted (Abraham #11/#12 race, 2026-11-18).
+  const inFlight = new Set(
+    outbox
+      .filter((o) => ["approved", "scheduled", "sending"].includes(o.status))
+      .map((o) => o.lead_key),
+  );
   const cols = new Map<Column, NewlyUpLead[]>();
   for (const l of leads) {
     const c = boardColumn(l);
@@ -950,13 +963,24 @@ export function LeadBoard({
   // wait (future next_action_at set after their last message, incl. snoozes; lib/newlyup `waiting`) moves the row to
   // the collapsed "Waiting" group until the date or their next message. Card-saved/won rows never wait: the go-live
   // step is Shib's. Rows left without a draft get one on page load (autodraft below).
+  // A lead whose last event is our sent message is not in "Needs you" (2026-11-18, Abraham after #11 went out):
+  // a draft made before that send is stale (freesite supersedes it on send), and a card-saved/won lead waits in
+  // "Waiting" until its next action date. A draft made after our send (a nudge from the digest) still counts.
+  const ourMove = (l: NewlyUpLead) =>
+    !!l.last_out_at && (!l.last_at || l.last_out_at >= l.last_at);
+  const liveDraft = (l: NewlyUpLead) => {
+    const d = drafts.get(l.key);
+    return !!d && !(ourMove(l) && d.created_at < (l.last_out_at || ""));
+  };
   const wanted = (l: NewlyUpLead) =>
-    drafts.has(l.key) ||
+    liveDraft(l) ||
     (boardColumn(l) !== "Lost / Later" && unanswered(l)) ||
-    boardColumn(l) === "Card saved / won";
+    (boardColumn(l) === "Card saved / won" &&
+      (!ourMove(l) || !!l.next_action_at));
   const waits = (l: NewlyUpLead) =>
     !!l.snoozed ||
-    (!!l.waiting && boardColumn(l) !== "Card saved / won" && !l.card_saved);
+    (!!l.waiting && boardColumn(l) !== "Card saved / won" && !l.card_saved) ||
+    (ourMove(l) && !liveDraft(l));
   const needs = leads.filter((l) => wanted(l) && !waits(l)).sort(byRecent);
   const waiting = leads
     .filter((l) => wanted(l) && waits(l))
@@ -968,7 +992,7 @@ export function LeadBoard({
   const router = useRouter();
   const [autoJobs, setAutoJobs] = useState<Record<string, string>>({});
   const bare = needs
-    .filter((l) => !drafts.has(l.key))
+    .filter((l) => !drafts.has(l.key) && !inFlight.has(l.key))
     .map((l) => l.key)
     .join(",");
   useEffect(() => {

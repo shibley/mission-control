@@ -48,6 +48,17 @@ const STATUS_STYLE: Record<string, string> = {
   skipped: "bg-white/10 text-white/40 ring-white/15",
 };
 
+function day(iso?: string | null) {
+  const d = new Date(iso || "");
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function when(iso?: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -483,10 +494,13 @@ function LeadDetail({
   l,
   draft,
   interactive,
+  autoJob,
 }: {
   l: NewlyUpLead;
   draft?: OutboxItem;
   interactive: boolean;
+  /** Set while the page-load autodraft for this row is running (lib/autodraft in freesite). */
+  autoJob?: string;
 }) {
   const router = useRouter();
   const [ins, setIns] = useState("");
@@ -523,10 +537,14 @@ function LeadDetail({
       setBusy(null);
     }
   }
-  async function redraft() {
+  async function redraft(useDefault = false) {
     setErr(null);
     try {
-      const { job: id } = await post({ action: "redraft", instruction: ins });
+      const { job: id } = await post(
+        useDefault
+          ? { action: "redraft", default: true }
+          : { action: "redraft", instruction: ins },
+      );
       if (!id) throw new Error("no job id");
       setJob(id);
       poll.current = setInterval(async () => {
@@ -544,7 +562,7 @@ function LeadDetail({
           setJob(null);
           if (j.status === "failed")
             setErr(`redraft failed: ${j.error || "unknown"}`);
-          else setIns("");
+          else if (!useDefault) setIns("");
           router.refresh();
         }
       }, 3000);
@@ -593,9 +611,22 @@ function LeadDetail({
             interactive={interactive}
             compact
           />
+        ) : autoJob || job ? (
+          <div className="animate-pulse rounded-md border border-dashed border-sky-400/30 p-2 text-sky-200/80">
+            drafting… an agent is writing the next reply (≈1 min). It lands here
+            as pending; nothing is sent.
+          </div>
         ) : (
-          <div className="rounded-md border border-dashed border-white/15 p-2 text-white/40">
-            No draft waiting for this lead.
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-white/15 p-2 text-white/40">
+            <span className="flex-1">No draft waiting for this lead.</span>
+            {interactive ? (
+              <button
+                onClick={() => redraft(true)}
+                className="rounded-md bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-500"
+              >
+                Draft now
+              </button>
+            ) : null}
           </div>
         )}
         {interactive ? (
@@ -616,8 +647,8 @@ function LeadDetail({
               className="w-full rounded-md border border-white/15 bg-white/[0.03] p-2 text-[13px] text-white/90 placeholder:text-white/25 focus:border-sky-400/60 focus:outline-none"
             />
             <button
-              disabled={!!job || !ins.trim()}
-              onClick={redraft}
+              disabled={!!job || !!autoJob || !ins.trim()}
+              onClick={() => redraft()}
               className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
             >
               {job ? "drafting…" : "Redraft"}
@@ -730,6 +761,8 @@ function LeadRow({
   onToggle,
   reason,
   interactive,
+  autoJob,
+  until,
 }: {
   l: NewlyUpLead;
   draft?: OutboxItem;
@@ -737,14 +770,21 @@ function LeadRow({
   onToggle: () => void;
   reason?: string;
   interactive: boolean;
+  autoJob?: string;
+  /** Waiting rows: the date we wait until (next_action_at). */
+  until?: string | null;
 }) {
   const card = l.card_saved || boardColumn(l) === "Card saved / won";
-  const sub =
+  const sub = [
+    until ? `wait until ${day(until)}` : null,
     [l.contact && l.contact !== l.business ? l.contact : null, l.city]
       .filter(Boolean)
       .join(" · ") ||
-    reason ||
-    l.source;
+      reason ||
+      l.source,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <li
       id={`lead-${l.key}`}
@@ -774,6 +814,10 @@ function LeadRow({
             <span className="rounded bg-amber-500/20 px-1 py-px text-[10px] font-semibold uppercase text-amber-200 ring-1 ring-amber-500/40">
               draft
             </span>
+          ) : autoJob ? (
+            <span className="animate-pulse rounded bg-sky-500/15 px-1 py-px text-[10px] font-semibold text-sky-200 ring-1 ring-sky-500/30">
+              drafting…
+            </span>
           ) : null}
           {card ? (
             <span className="rounded bg-emerald-500/20 px-1 py-px text-[10px] font-semibold uppercase text-emerald-200 ring-1 ring-emerald-500/40">
@@ -789,7 +833,12 @@ function LeadRow({
         </span>
       </button>
       {open ? (
-        <LeadDetail l={l} draft={draft} interactive={interactive} />
+        <LeadDetail
+          l={l}
+          draft={draft}
+          interactive={interactive}
+          autoJob={autoJob}
+        />
       ) : null}
     </li>
   );
@@ -895,24 +944,88 @@ export function LeadBoard({
   }
   const lost = cols.get("Lost / Later") || [];
   const all = [...COLUMNS, "Lost / Later" as const];
-  // Snoozed rows stay out until their date (or until they write again: lib/newlyup computes `snoozed`).
-  const needs = leads
-    .filter(
-      (l) =>
-        !l.snoozed &&
-        (drafts.has(l.key) ||
-          (boardColumn(l) !== "Lost / Later" && unanswered(l)) ||
-          boardColumn(l) === "Card saved / won"),
-    )
-    .sort(byRecent);
+  // Rule (2026-11-18): every "Needs you" row has a draft, or is drafting one, or is not in "Needs you". A deliberate
+  // wait (future next_action_at set after their last message, incl. snoozes; lib/newlyup `waiting`) moves the row to
+  // the collapsed "Waiting" group until the date or their next message. Card-saved/won rows never wait: the go-live
+  // step is Shib's. Rows left without a draft get one on page load (autodraft below).
+  const wanted = (l: NewlyUpLead) =>
+    drafts.has(l.key) ||
+    (boardColumn(l) !== "Lost / Later" && unanswered(l)) ||
+    boardColumn(l) === "Card saved / won";
+  const waits = (l: NewlyUpLead) =>
+    !!l.snoozed ||
+    (!!l.waiting && boardColumn(l) !== "Card saved / won" && !l.card_saved);
+  const needs = leads.filter((l) => wanted(l) && !waits(l)).sort(byRecent);
+  const waiting = leads
+    .filter((l) => wanted(l) && waits(l))
+    .sort((a, b) =>
+      (a.next_action_at || "").localeCompare(b.next_action_at || ""),
+    );
+  // Autodraft: Needs-you rows with no pending draft ask freesite for one (deduped there per lead per inbound message),
+  // then poll the jobs and refresh when each lands. Local + interactive only; the Vercel copy is read-only.
+  const router = useRouter();
+  const [autoJobs, setAutoJobs] = useState<Record<string, string>>({});
+  const bare = needs
+    .filter((l) => !drafts.has(l.key))
+    .map((l) => l.key)
+    .join(",");
+  useEffect(() => {
+    if (!interactive || !bare) return;
+    let gone = false;
+    fetch("/api/newlyup/lead", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "autodraft", keys: bare.split(",") }),
+    })
+      .then((r) => r.json())
+      .then(
+        (j: { results?: { lead: string; status: string; job?: string }[] }) => {
+          if (gone) return;
+          const running: Record<string, string> = {};
+          for (const r of j.results || [])
+            if ((r.status === "started" || r.status === "drafting") && r.job)
+              running[r.lead] = r.job;
+          setAutoJobs((cur) => ({ ...cur, ...running }));
+        },
+      )
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, [interactive, bare]);
+  const jobList = Object.entries(autoJobs);
+  useEffect(() => {
+    if (!jobList.length) return;
+    const t = setInterval(async () => {
+      for (const [lead, job] of jobList) {
+        const r = await fetch(
+          `/api/newlyup/lead?job=${encodeURIComponent(job)}`,
+        ).catch(() => null);
+        const j = r
+          ? ((await r.json().catch(() => ({}))) as { status?: string })
+          : {};
+        if (j.status && j.status !== "drafting") {
+          setAutoJobs((cur) => {
+            const next = { ...cur };
+            delete next[lead];
+            return next;
+          });
+          router.refresh();
+        }
+      }
+    }, 4000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobList.map(([k, v]) => k + v).join(",")]);
   // Telegram alerts link /newlyup?lead=<key>: open that row (in Needs you when it is there) and scroll to it.
   useEffect(() => {
     const key = new URLSearchParams(window.location.search).get("lead");
     if (!key) return;
     const inNeeds = needs.some((l) => l.key === key);
+    const inWaiting = waiting.some((l) => l.key === key);
     const lead = leads.find((l) => l.key === key);
     if (!lead) return;
-    const sec = inNeeds ? "needs" : boardColumn(lead);
+    const sec = inNeeds ? "needs" : inWaiting ? "waiting" : boardColumn(lead);
     setOpenSecs((s) => new Set([...s, sec]));
     setOpenRow(`${sec}:${key}`);
     setTimeout(
@@ -941,6 +1054,8 @@ export function LeadBoard({
             onToggle={() => setOpenRow((r) => (r === k ? null : k))}
             reason={reason?.(l)}
             interactive={interactive}
+            autoJob={autoJobs[l.key]}
+            until={prefix === "waiting" ? l.next_action_at : undefined}
           />
         );
       })}
@@ -974,6 +1089,18 @@ export function LeadBoard({
             </p>
           )}
         </Section>
+        {waiting.length ? (
+          <div className="mt-2">
+            <Section
+              title="Waiting"
+              count={waiting.length}
+              open={openSecs.has("waiting")}
+              onToggle={() => toggleSec("waiting")}
+            >
+              {rows("waiting", waiting)}
+            </Section>
+          </div>
+        ) : null}
       </div>
       <div className="space-y-2 sm:hidden">
         {all.map((c) => {

@@ -55,6 +55,9 @@ export type NewlyUpLead = {
   last_out?: LeadMsg | null;
   /** Snoozed on /newlyup: next_action_at is in the future and no message from them arrived since the snooze. */
   snoozed?: boolean;
+  /** Deliberate wait (2026-11-18): next_action_at is in the future and was set after their newest message (freesite
+   *  leads.next_action_set_at; a snooze counts). The board shows these under "Waiting", not "Needs you". */
+  waiting?: boolean;
 };
 
 /** One lead_events row as the board shows it. direction: in = their words, out = ours, note = our log. */
@@ -139,9 +142,7 @@ type SqliteDb = {
 };
 
 // getBuiltinModule keeps node:sqlite out of the Next bundler; null on any failure so the JSON backup is used.
-function readFreesiteDb(
-  file: string,
-):
+function readFreesiteDb(file: string):
   | (Pick<NewlyUpTab, "pipeline" | "previews" | "outbox"> & {
       leads: NewlyUpLead[] | null;
       groups: NewlyUpGroup[] | null;
@@ -286,6 +287,12 @@ function readFreesiteDb(
               Date.parse(String(r.next_action_at)) > Date.now() &&
               !!r.snoozed_at &&
               (!r.last_in_at || String(r.snoozed_at) >= String(r.last_in_at)),
+            waiting:
+              !!r.next_action_at &&
+              Date.parse(String(r.next_action_at)) > Date.now() &&
+              (!r.last_in_at ||
+                String(r.next_action_set_at || r.snoozed_at || "") >=
+                  String(r.last_in_at)),
           }))
       : null;
     const outbox = hasOutbox

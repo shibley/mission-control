@@ -14,15 +14,27 @@ const run = promisify(execFile);
 //   lost    {key, reason}        -> nu-track lead lost (stage lost, pending drafts skipped)
 //   redraft {key, instruction}   -> starts freesite scripts/nu-redraft.mjs in the background (one agent turn that only
 //                                   drafts); returns {job}. GET ?job=<id> reads its status until the pending outbox row exists.
+//                                   {default: true} = no instruction, "draft the best next reply per the playbook" (Draft now).
+//   autodraft {keys}             -> freesite scripts/nu-autodraft.mjs: "Needs you" rows without a draft get one, at most once
+//                                   per lead per inbound message; returns {results:[{lead,status,job}]} (jobs run detached).
 type Body = {
   key?: string;
-  action?: "snooze" | "lost" | "redraft";
+  keys?: string[];
+  action?: "snooze" | "lost" | "redraft" | "autodraft";
   until?: string;
   reason?: string;
   instruction?: string;
+  default?: boolean;
 };
 
 const KEY = /^[a-z0-9][a-z0-9-]{0,80}$/;
+// nu-redraft shells out to `openclaw`, which lives in Homebrew's bin (not on launchd's PATH).
+const childEnv = () => ({
+  ...process.env,
+  PATH: `/opt/homebrew/bin:/usr/local/bin:${
+    process.env.PATH || "/usr/bin:/bin"
+  }`,
+});
 const JOB = /^[a-z0-9-]{1,120}$/;
 
 export async function POST(req: Request) {
@@ -31,13 +43,39 @@ export async function POST(req: Request) {
   const { ROOT } = await import("@/lib/data");
   const freesite = path.join(ROOT, "freesite");
   const body = (await req.json().catch(() => ({}))) as Body;
+  if (body.action === "autodraft") {
+    const keys = (Array.isArray(body.keys) ? body.keys : [])
+      .map(String)
+      .filter((k) => KEY.test(k))
+      .slice(0, 40);
+    if (!keys.length) return NextResponse.json({ results: [] });
+    try {
+      const { stdout } = await run(
+        process.execPath,
+        [
+          path.join(freesite, "scripts/nu-autodraft.mjs"),
+          ...keys.flatMap((k) => ["--lead", k]),
+        ],
+        { cwd: freesite, timeout: 20_000, env: childEnv() },
+      );
+      return NextResponse.json(
+        JSON.parse(stdout.trim().split("\n").pop() || "{}"),
+      );
+    } catch (e) {
+      const err = e as { stderr?: string; message: string };
+      return NextResponse.json(
+        { error: (err.stderr || err.message).trim().split("\n")[0] },
+        { status: 500 },
+      );
+    }
+  }
   const key = String(body.key || "");
   if (!KEY.test(key))
     return NextResponse.json({ error: "lead key required" }, { status: 400 });
 
   if (body.action === "redraft") {
     const instruction = String(body.instruction || "").trim();
-    if (!instruction)
+    if (!instruction && !body.default)
       return NextResponse.json(
         { error: "type what you want the message to say" },
         { status: 400 },
@@ -49,7 +87,7 @@ export async function POST(req: Request) {
       );
     const job = `${key}-${Date.now()}`;
     const ins = path.join(os.tmpdir(), `nu-redraft-ins-${job}.txt`);
-    fs.writeFileSync(ins, instruction);
+    if (instruction) fs.writeFileSync(ins, instruction);
     const jobs = path.join(freesite, "data/redraft");
     fs.mkdirSync(jobs, { recursive: true });
     fs.writeFileSync(
@@ -68,8 +106,7 @@ export async function POST(req: Request) {
         path.join(freesite, "scripts/nu-redraft.mjs"),
         "--lead",
         key,
-        "--instruction-file",
-        ins,
+        ...(instruction ? ["--instruction-file", ins] : ["--default"]),
         "--job",
         job,
       ],
@@ -77,12 +114,7 @@ export async function POST(req: Request) {
         cwd: freesite,
         detached: true,
         stdio: ["ignore", out, out],
-        env: {
-          ...process.env,
-          PATH: `/opt/homebrew/bin:/usr/local/bin:${
-            process.env.PATH || "/usr/bin:/bin"
-          }`,
-        },
+        env: childEnv(),
       },
     );
     child.unref();
@@ -111,7 +143,7 @@ export async function POST(req: Request) {
     args.push("lost", key, "--reason", reason.replace(/^--+/, ""));
   } else {
     return NextResponse.json(
-      { error: "action must be snooze|lost|redraft" },
+      { error: "action must be snooze|lost|redraft|autodraft" },
       { status: 400 },
     );
   }

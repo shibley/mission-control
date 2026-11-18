@@ -37,6 +37,26 @@ export type NewlyUpLead = {
   preview_url: string | null;
   last_at: string | null;
   last_text: string | null;
+  /** True when a clients row (paying, active) hangs off this lead's preview — the "Live" board column. */
+  live?: boolean;
+};
+
+// freesite.db `outbox` (lib/outbox.mjs): drafts waiting for Shib's approval, plus recent sends/failures.
+export type OutboxItem = {
+  id: number;
+  lead_key: string | null;
+  channel: string;
+  thread_url: string | null;
+  text: string;
+  image_path: string | null;
+  suggested_at: string | null;
+  status: string;
+  approved_at: string | null;
+  send_at: string | null;
+  sent_at: string | null;
+  error: string | null;
+  created_by: string | null;
+  created_at: string;
 };
 
 export type NewlyUpGroup = {
@@ -59,6 +79,8 @@ export type NewlyUpTab = {
   fb: FbEvent[];
   pipeline: { total: number; lanes: Record<string, number>; withEmail: number } | null;
   previews: { slug: string; name: string; lane: string; url: string; expires_at: string }[];
+  /** Open drafts + the last 7 days of sent/failed/skipped. Undefined on snapshots that predate the table. */
+  outbox?: OutboxItem[];
   log: string[];
   features?: { n: string; idea: string; source: string; notes: string }[];
   links: { label: string; url: string }[];
@@ -76,7 +98,7 @@ function readJson<T>(p: string): T | null {
 type SqliteDb = { prepare(sql: string): { all(): Record<string, unknown>[]; get(): Record<string, unknown> }; close(): void };
 
 // getBuiltinModule keeps node:sqlite out of the Next bundler; null on any failure so the JSON backup is used.
-function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"> & { leads: NewlyUpLead[] | null; groups: NewlyUpGroup[] | null }) | null {
+function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews" | "outbox"> & { leads: NewlyUpLead[] | null; groups: NewlyUpGroup[] | null }) | null {
   if (!fs.existsSync(file)) return null;
   let db: SqliteDb | null = null;
   try {
@@ -96,7 +118,8 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
     const leads = hasLeads
       ? db
           .prepare(
-            `select l.*, p.url preview_url, e.at last_at, e.text last_text from leads l
+            `select l.*, p.url preview_url, e.at last_at, e.text last_text,
+               exists(select 1 from clients c where c.place_id = p.place_id and c.status = 'active') live from leads l
              left join previews p on p.slug = l.preview_slug
              left join lead_events e on e.id = (select id from lead_events where lead_id = l.id order by at desc, id desc limit 1)
              order by coalesce(e.at, l.updated_at) desc`,
@@ -115,8 +138,35 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
             preview_url: str(r.preview_url) ?? (r.preview_slug ? `https://newlyup.com/p/${r.preview_slug}` : null),
             last_at: str(r.last_at),
             last_text: str(r.last_text),
+            live: Number(r.live) === 1,
           }))
       : null;
+    const hasOutbox = db.prepare("select count(*) n from sqlite_master where type='table' and name='outbox'").get().n === 1;
+    const outbox = hasOutbox
+      ? db
+          .prepare(
+            `select * from outbox where status in ('pending','approved','scheduled','sending')
+               or coalesce(sent_at, approved_at, created_at) >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
+             order by id desc`,
+          )
+          .all()
+          .map((r) => ({
+            id: Number(r.id),
+            lead_key: str(r.lead_key),
+            channel: String(r.channel),
+            thread_url: str(r.thread_url),
+            text: String(r.text ?? ""),
+            image_path: str(r.image_path),
+            suggested_at: str(r.suggested_at),
+            status: String(r.status),
+            approved_at: str(r.approved_at),
+            send_at: str(r.send_at),
+            sent_at: str(r.sent_at),
+            error: str(r.error),
+            created_by: str(r.created_by),
+            created_at: String(r.created_at),
+          }))
+      : [];
     const groups = hasLeads
       ? db
           .prepare("select * from fb_groups order by joined desc, coalesce(posted_at, joined_at, updated_at) desc")
@@ -133,7 +183,7 @@ function readFreesiteDb(file: string): (Pick<NewlyUpTab, "pipeline" | "previews"
             note: str(r.note),
           }))
       : null;
-    return { pipeline: { total, lanes, withEmail }, previews, leads, groups };
+    return { pipeline: { total, lanes, withEmail }, previews, outbox, leads, groups };
   } catch {
     return null;
   } finally {
@@ -215,6 +265,7 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
 
   let pipeline: NewlyUpTab["pipeline"] = null;
   let previews: NewlyUpTab["previews"] = [];
+  let outbox: OutboxItem[] = [];
   const fromDb = readFreesiteDb(path.join(ROOT, "freesite/data/freesite.db"));
   let leads = fromDb?.leads ?? null;
   let groups = fromDb?.groups ?? null;
@@ -222,6 +273,7 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
   if (!leads || !groups) ({ leads, groups } = leadsFromJsonl(ROOT, fb));
   if (fromDb) {
     ({ pipeline, previews } = fromDb);
+    outbox = fromDb.outbox ?? [];
   } else {
     const pros = readJson<unknown>(path.join(ROOT, "freesite/data/prospects.json"));
     if (pros) {
@@ -276,6 +328,7 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
     fb,
     pipeline,
     previews,
+    outbox,
     log,
     features,
     links: [

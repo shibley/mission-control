@@ -133,8 +133,10 @@ function DraftCard({
     }
   }
 
+  // Compact = inside a lead row, which is already an <li>: render a <div> there (nested <li> broke hydration).
+  const Tag = compact ? "div" : "li";
   return (
-    <li
+    <Tag
       id={compact ? undefined : `outbox-${item.id}`}
       className={`min-w-0 scroll-mt-4 rounded-lg border p-3 ${
         compact
@@ -271,7 +273,7 @@ function DraftCard({
         </div>
       ) : null}
       {err ? <div className="mt-2 text-xs text-rose-300">{err}</div> : null}
-    </li>
+    </Tag>
   );
 }
 

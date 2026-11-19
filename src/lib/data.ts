@@ -90,12 +90,20 @@ export function readIdeas(): IdeasFile {
 
 // ---------- MRR / funnel, from the production-watchdog day files ----------
 
-type WatchdogStripe = Record<string, number | null>;
+type WatchdogStripe = Record<string, number | string | null>;
 type WatchdogFile = {
   generatedAt?: string;
   properties?: Record<
     string,
-    { status?: string; metrics?: Record<string, number>; errors?: string[]; stripe?: WatchdogStripe }
+    {
+      status?: string;
+      reason?: string;
+      metrics?: Record<string, number>;
+      errors?: string[];
+      // Named `stripe` for history; the Shopify app's bucket (source
+      // "shopify-partners-history") has the same shape but comes from Shopify Billing.
+      stripe?: WatchdogStripe;
+    }
   >;
   analytics?: {
     sites?: Record<
@@ -159,7 +167,9 @@ export function moneyPanel() {
       cash30d: Number(s.paymentsAmount30d ?? 0) / 100,
       startRate7d: se7 > 0 ? starts7 / se7 : 0,
       topReferrers: a?.topReferrers?.slice(0, 4) ?? [],
-      errors: p.errors ?? [],
+      // "stripe" unless the watchdog says otherwise (the Shopify app bills via Shopify).
+      billingSource: typeof s.source === "string" ? s.source : "stripe",
+      errors: [...(p.status === "UNAVAILABLE" && p.reason ? [p.reason] : []), ...(p.errors ?? [])],
     };
   });
 

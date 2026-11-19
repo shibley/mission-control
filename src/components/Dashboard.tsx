@@ -412,6 +412,16 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
                     </span>
                   </span>
                 </div>
+                {p.billingSource === "shopify-partners-history" ? (
+                  <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-white/50">
+                    <div className="col-span-2 text-white/40">
+                      Shopify Billing (Partners history, test charges excluded) · cash inferred from the 30-day cycle
+                    </div>
+                    <div>
+                      cash 30d <span className="tabular-nums text-white/80">{money(p.cash30d)}</span>
+                    </div>
+                  </dl>
+                ) : (
                 <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-white/50">
                   <div>
                     sessions 7d <span className="tabular-nums text-white/80">{p.sessions7d}</span>
@@ -432,6 +442,7 @@ export default function Dashboard({ initial }: { initial: DashboardData }) {
                     cash 30d <span className="tabular-nums text-white/80">{money(p.cash30d)}</span>
                   </div>
                 </dl>
+                )}
                 {p.errors.length ? (
                   <p className="mt-2 text-xs text-rose-300">{p.errors.join("; ")}</p>
                 ) : null}

@@ -37,7 +37,7 @@ export function boardColumn(l: NewlyUpLead): Column {
   );
 }
 
-const OPEN = ["pending", "approved", "scheduled", "sending"];
+const OPEN = ["pending", "approved", "scheduled", "sending", "held"];
 const STATUS_STYLE: Record<string, string> = {
   pending: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
   approved: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
@@ -45,6 +45,7 @@ const STATUS_STYLE: Record<string, string> = {
   sending: "bg-violet-500/15 text-violet-300 ring-violet-500/30",
   sent: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
   failed: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
+  held: "bg-orange-500/15 text-orange-300 ring-orange-500/30",
   skipped: "bg-white/10 text-white/40 ring-white/15",
 };
 
@@ -90,11 +91,14 @@ function DraftCard({
   lead,
   interactive,
   compact,
+  older = 0,
 }: {
   item: OutboxItem;
   lead?: NewlyUpLead;
   interactive: boolean;
   compact?: boolean;
+  /** Pending drafts for the same lead hidden behind this one (one draft per lead is shown). */
+  older?: number;
 }) {
   const router = useRouter();
   const [text, setText] = useState(item.text);
@@ -102,16 +106,32 @@ function DraftCard({
   const [err, setErr] = useState<string | null>(null);
   const editable =
     interactive &&
-    ["pending", "approved", "scheduled", "failed"].includes(item.status);
+    ["pending", "approved", "scheduled", "failed", "held"].includes(
+      item.status,
+    );
   const dirty = text !== item.text;
 
   async function act(
-    action: "approve-now" | "approve-suggested" | "skip" | "save",
+    action:
+      | "approve-now"
+      | "approve-suggested"
+      | "skip"
+      | "save"
+      | "send-anyway",
   ) {
     if (
       action === "approve-now" &&
       !confirm(
         `Send this to ${lead?.business || item.lead_key || "this lead"} now?`,
+      )
+    )
+      return;
+    if (
+      action === "send-anyway" &&
+      !confirm(
+        `A similar message already went to ${
+          lead?.business || item.lead_key || "this lead"
+        }. Send this one anyway?`,
       )
     )
       return;
@@ -164,6 +184,14 @@ function DraftCard({
           #{item.id} · {item.channel}
           {item.created_by ? ` · by ${item.created_by}` : ""}
         </span>
+        {older > 0 ? (
+          <span
+            title="Approving this draft skips the older one(s)"
+            className="text-[11px] text-amber-200/70"
+          >
+            +{older} older draft{older > 1 ? "s" : ""}
+          </span>
+        ) : null}
       </div>
       <div className="flex flex-col gap-3 sm:flex-row">
         <textarea
@@ -228,7 +256,16 @@ function DraftCard({
       </div>
       {editable ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          {item.status !== "failed" ? (
+          {item.status === "held" ? (
+            <button
+              disabled={!!busy || dirty}
+              title={dirty ? "Save the edit first" : undefined}
+              onClick={() => act("send-anyway")}
+              className="rounded-md bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+            >
+              {busy === "send-anyway" ? "…" : "Send anyway"}
+            </button>
+          ) : item.status !== "failed" ? (
             <>
               <button
                 disabled={!!busy}
@@ -250,7 +287,7 @@ function DraftCard({
               </button>
             </>
           ) : null}
-          {dirty || item.status === "failed" ? (
+          {dirty || item.status === "failed" || item.status === "held" ? (
             <button
               disabled={!!busy || !dirty}
               onClick={() => act("save")}
@@ -258,7 +295,7 @@ function DraftCard({
             >
               {busy === "save"
                 ? "…"
-                : item.status === "failed"
+                : item.status === "failed" || item.status === "held"
                   ? "Save edit → back to pending"
                   : "Save edit"}
             </button>
@@ -277,6 +314,20 @@ function DraftCard({
   );
 }
 
+// Newest pending draft per lead + how many older pending ones it hides. freesite allows one open draft per lead
+// (lib/outbox addOutbox), so "older" only shows up on rows from before that rule.
+function pendingPerLead(outbox: OutboxItem[]) {
+  const newest = new Map<string, OutboxItem>();
+  const older = new Map<string, number>();
+  for (const o of outbox) {
+    if (o.status !== "pending" || !o.lead_key) continue;
+    const cur = newest.get(o.lead_key);
+    if (cur) older.set(o.lead_key, (older.get(o.lead_key) || 0) + 1);
+    if (!cur || o.id > cur.id) newest.set(o.lead_key, o);
+  }
+  return { newest, older };
+}
+
 export function OutboxPanel({
   outbox,
   leads,
@@ -287,8 +338,16 @@ export function OutboxPanel({
   interactive: boolean;
 }) {
   const byKey = new Map(leads.map((l) => [l.key, l]));
+  // One pending draft per lead on screen (Abraham #14/#16, 2026-11-18): the newest, with "+N older draft".
+  const { newest, older } = pendingPerLead(outbox);
   const open = outbox
-    .filter((o) => OPEN.includes(o.status))
+    .filter(
+      (o) =>
+        OPEN.includes(o.status) &&
+        (o.status !== "pending" ||
+          !o.lead_key ||
+          newest.get(o.lead_key)?.id === o.id),
+    )
     .sort(
       (a, b) =>
         (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) ||
@@ -346,6 +405,11 @@ export function OutboxPanel({
                 item={o}
                 lead={o.lead_key ? byKey.get(o.lead_key) : undefined}
                 interactive={interactive}
+                older={
+                  o.status === "pending" && o.lead_key
+                    ? older.get(o.lead_key)
+                    : 0
+                }
               />
             ))}
           </ul>
@@ -495,11 +559,17 @@ const tomorrow = () => {
 function LeadDetail({
   l,
   draft,
+  older,
+  held,
   interactive,
   autoJob,
 }: {
   l: NewlyUpLead;
   draft?: OutboxItem;
+  /** Older pending drafts hidden behind `draft`. */
+  older?: number;
+  /** A send outbox-worker held: a similar message reached them in the last 12h ("Send anyway"). */
+  held?: OutboxItem;
   interactive: boolean;
   /** Set while the page-load autodraft for this row is running (lib/autodraft in freesite). */
   autoJob?: string;
@@ -612,13 +682,23 @@ function LeadDetail({
         </div>
       </div>
       <div className="min-w-0 space-y-2">
-        {draft ? (
+        {held ? (
+          <DraftCard
+            key={`held-${held.id}-${held.text.length}`}
+            item={held}
+            lead={l}
+            interactive={interactive}
+            compact
+          />
+        ) : null}
+        {held && !draft ? null : draft ? (
           <DraftCard
             key={`${draft.id}-${draft.text.length}`}
             item={draft}
             lead={l}
             interactive={interactive}
             compact
+            older={older}
           />
         ) : autoJob || job ? (
           <div className="animate-pulse rounded-md border border-dashed border-sky-400/30 p-2 text-sky-200/80">
@@ -766,6 +846,8 @@ function LeadDetail({
 function LeadRow({
   l,
   draft,
+  older,
+  held,
   open,
   onToggle,
   reason,
@@ -775,6 +857,8 @@ function LeadRow({
 }: {
   l: NewlyUpLead;
   draft?: OutboxItem;
+  older?: number;
+  held?: OutboxItem;
   open: boolean;
   onToggle: () => void;
   reason?: string;
@@ -819,7 +903,11 @@ function LeadRow({
               className="h-2 w-2 rounded-full bg-sky-400"
             />
           ) : null}
-          {draft ? (
+          {held ? (
+            <span className="rounded bg-orange-500/20 px-1 py-px text-[10px] font-semibold uppercase text-orange-200 ring-1 ring-orange-500/40">
+              held
+            </span>
+          ) : draft ? (
             <span className="rounded bg-amber-500/20 px-1 py-px text-[10px] font-semibold uppercase text-amber-200 ring-1 ring-amber-500/40">
               draft
             </span>
@@ -845,6 +933,8 @@ function LeadRow({
         <LeadDetail
           l={l}
           draft={draft}
+          older={older}
+          held={held}
           interactive={interactive}
           autoJob={autoJob}
         />
@@ -942,14 +1032,19 @@ export function LeadBoard({
     setOpenSecs((s) =>
       s.has(k) ? new Set([...s].filter((x) => x !== k)) : new Set([...s, k]),
     );
-  const drafts = new Map<string, OutboxItem>();
+  // One pending draft per lead: the newest, with a "+N older draft" note when legacy rows hide behind it.
+  const { newest: drafts, older } = pendingPerLead(outbox);
+  // Sends outbox-worker held (similar message sent to the lead in the last 12h): shown on the row with Send anyway.
+  const held = new Map<string, OutboxItem>();
   for (const o of outbox)
-    if (o.status === "pending" && o.lead_key && !drafts.has(o.lead_key))
-      drafts.set(o.lead_key, o);
-  // Leads with a reply already approved/scheduled/sending: never autodrafted (Abraham #11/#12 race, 2026-11-18).
+    if (o.status === "held" && o.lead_key && !held.has(o.lead_key))
+      held.set(o.lead_key, o);
+  // Leads with a reply already approved/scheduled/sending/held: never autodrafted (Abraham #11/#12 race, 2026-11-18).
   const inFlight = new Set(
     outbox
-      .filter((o) => ["approved", "scheduled", "sending"].includes(o.status))
+      .filter((o) =>
+        ["approved", "scheduled", "sending", "held"].includes(o.status),
+      )
       .map((o) => o.lead_key),
   );
   const cols = new Map<Column, NewlyUpLead[]>();
@@ -973,14 +1068,16 @@ export function LeadBoard({
     return !!d && !(ourMove(l) && d.created_at < (l.last_out_at || ""));
   };
   const wanted = (l: NewlyUpLead) =>
+    held.has(l.key) ||
     liveDraft(l) ||
     (boardColumn(l) !== "Lost / Later" && unanswered(l)) ||
     (boardColumn(l) === "Card saved / won" &&
       (!ourMove(l) || !!l.next_action_at));
   const waits = (l: NewlyUpLead) =>
-    !!l.snoozed ||
-    (!!l.waiting && boardColumn(l) !== "Card saved / won" && !l.card_saved) ||
-    (ourMove(l) && !liveDraft(l));
+    !held.has(l.key) &&
+    (!!l.snoozed ||
+      (!!l.waiting && boardColumn(l) !== "Card saved / won" && !l.card_saved) ||
+      (ourMove(l) && !liveDraft(l)));
   const needs = leads.filter((l) => wanted(l) && !waits(l)).sort(byRecent);
   const waiting = leads
     .filter((l) => wanted(l) && waits(l))
@@ -1076,6 +1173,8 @@ export function LeadBoard({
             key={k}
             l={l}
             draft={drafts.get(l.key)}
+            older={older.get(l.key)}
+            held={held.get(l.key)}
             open={openRow === k}
             onToggle={() => setOpenRow((r) => (r === k ? null : k))}
             reason={reason?.(l)}

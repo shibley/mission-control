@@ -298,7 +298,7 @@ function readFreesiteDb(file: string):
     const outbox = hasOutbox
       ? db
           .prepare(
-            `select * from outbox where status in ('pending','approved','scheduled','sending')
+            `select * from outbox where status in ('pending','approved','scheduled','sending','held')
                or coalesce(sent_at, approved_at, created_at) >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
              order by id desc`,
           )

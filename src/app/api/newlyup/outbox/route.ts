@@ -11,7 +11,8 @@ const run = promisify(execFile);
 
 // Shib's approve / skip / edit on /newlyup. Every write goes through freesite's own CLI (scripts/nu-track.mjs outbox …,
 // lib/outbox.mjs) so the dashboard never carries a second copy of the status rules. Local Mac only (lib/local-gate).
-type Body = { id?: number; action?: "approve-now" | "approve-suggested" | "skip" | "save"; text?: string };
+// send-anyway: a row outbox-worker held because a similar message went to the lead in the last 12h (`outbox force`).
+type Body = { id?: number; action?: "approve-now" | "approve-suggested" | "skip" | "save" | "send-anyway"; text?: string };
 
 export async function POST(req: Request) {
   const refused = refuseUnlessLocal(req);
@@ -21,8 +22,8 @@ export async function POST(req: Request) {
   const id = Number(body.id);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  const verb = ({ "approve-now": "approve", "approve-suggested": "approve", skip: "skip", save: "edit" } as Record<string, string>)[body.action ?? ""];
-  if (!verb) return NextResponse.json({ error: "action must be approve-now|approve-suggested|skip|save" }, { status: 400 });
+  const verb = ({ "approve-now": "approve", "approve-suggested": "approve", skip: "skip", save: "edit", "send-anyway": "force" } as Record<string, string>)[body.action ?? ""];
+  if (!verb) return NextResponse.json({ error: "action must be approve-now|approve-suggested|skip|save|send-anyway" }, { status: 400 });
   const args = [path.join(ROOT, "freesite/scripts/nu-track.mjs"), "outbox", verb, String(id)];
   if (body.action === "approve-suggested") args.push("--at", "suggested");
   if (body.action === "skip") args.push("--reason", "skipped by Shib on /newlyup");

@@ -283,6 +283,8 @@ function readFreesiteDb(file: string):
       : "at, kind, null direction, null body, text";
     const lastMsg = (dirSql: string) =>
       `(select json_object('at', at, 'kind', kind, 'direction', direction, 'body', body, 'text', text) from (select ${msgCols} from lead_events where lead_id = l.id and ${dirSql} order by at desc, id desc limit 1))`;
+    // last_at skips kind 'reaction' (an emoji reaction / sticker / blank preview; freesite lib/db nonMessage, 2026-11-19):
+    // it is not a message, so it neither makes "they wrote last" nor undoes "our move" (karina-guizar #30).
     const leads = hasLeads
       ? db
           .prepare(
@@ -301,7 +303,7 @@ function readFreesiteDb(file: string):
                }, l.post_url) thread_url
              from leads l
              left join previews p on p.slug = l.preview_slug
-             left join lead_events e on e.id = (select id from lead_events where lead_id = l.id order by at desc, id desc limit 1)
+             left join lead_events e on e.id = (select id from lead_events where lead_id = l.id and kind <> 'reaction' order by at desc, id desc limit 1)
              order by coalesce(e.at, l.updated_at) desc`,
           )
           .all()

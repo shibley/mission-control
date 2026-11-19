@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import type { LeadMsg, NewlyUpLead, OutboxItem } from "@/lib/newlyup";
 
@@ -49,6 +57,79 @@ const STATUS_STYLE: Record<string, string> = {
   skipped: "bg-white/10 text-white/40 ring-white/15",
 };
 
+// Live outbox (Shib 2026-11-18: "when I clicked approve … approve button didn't go away"). Every card action patches
+// its row here straight from the API response, so the card, the header count and the lead row change at once, without
+// waiting for a server re-render. Cards that are approved/scheduled/sending are polled every 5s (GET
+// /api/newlyup/outbox?ids=) until they reach sent/failed/held. `acted` = rows Shib touched in this page view: they stay
+// on screen (lead row + outbox list) through Sent ✓ instead of vanishing into "last 7 days".
+const IN_FLIGHT = ["approved", "scheduled", "sending"];
+type Live = {
+  outbox: OutboxItem[];
+  acted: Set<number>;
+  patch: (item: OutboxItem, acted?: boolean) => void;
+};
+const LiveOutbox = createContext<Live | null>(null);
+export const LiveOutboxProvider = LiveOutbox.Provider;
+const sameRow = (a: OutboxItem, b: OutboxItem) =>
+  a.status === b.status &&
+  a.text === b.text &&
+  a.error === b.error &&
+  a.send_at === b.send_at &&
+  a.sent_at === b.sent_at;
+
+export function useLiveOutbox(base: OutboxItem[], interactive: boolean): Live {
+  const [over, setOver] = useState<Record<number, OutboxItem>>({});
+  const [acted, setActed] = useState<Set<number>>(() => new Set());
+  const patch = useCallback((item: OutboxItem, mark = false) => {
+    setOver((o) => (o[item.id] && sameRow(o[item.id], item) ? o : { ...o, [item.id]: item }));
+    if (mark) setActed((a) => (a.has(item.id) ? a : new Set([...a, item.id])));
+  }, []);
+  // A server re-render that caught up with a patched row takes over again (later server changes then show).
+  // Adjusted during render when `base` changes (React's "storing information from previous renders" pattern).
+  const [prevBase, setPrevBase] = useState(base);
+  if (prevBase !== base) {
+    setPrevBase(base);
+    const next = { ...over };
+    let changed = false;
+    for (const b of base)
+      if (next[b.id] && sameRow(next[b.id], b)) {
+        delete next[b.id];
+        changed = true;
+      }
+    if (changed) setOver(next);
+  }
+  const outbox = useMemo(() => {
+    const ids = new Set(base.map((b) => b.id));
+    return [
+      ...base.map((b) => over[b.id] ?? b),
+      ...Object.values(over).filter((o) => !ids.has(o.id)),
+    ];
+  }, [base, over]);
+  const polling = outbox
+    .filter((o) => IN_FLIGHT.includes(o.status))
+    .map((o) => o.id)
+    .join(",");
+  useEffect(() => {
+    if (!interactive || !polling) return;
+    let gone = false;
+    const t = setInterval(async () => {
+      const r = await fetch(`/api/newlyup/outbox?ids=${polling}`, {
+        cache: "no-store",
+      }).catch(() => null);
+      const j =
+        r && r.ok
+          ? ((await r.json().catch(() => null)) as { items?: OutboxItem[] } | null)
+          : null;
+      if (!gone) for (const it of j?.items ?? []) patch(it);
+    }, 5000);
+    return () => {
+      gone = true;
+      clearInterval(t);
+    };
+  }, [interactive, polling, patch]);
+  return { outbox, acted, patch };
+}
+
 function day(iso?: string | null) {
   const d = new Date(iso || "");
   if (Number.isNaN(d.getTime())) return "—";
@@ -86,6 +167,24 @@ function Pill({ label, style }: { label: string; style?: string }) {
   );
 }
 
+type CardAction =
+  | "approve-now"
+  | "approve-suggested"
+  | "skip"
+  | "save"
+  | "send-anyway"
+  | "undo"
+  | "retry";
+const BUSY_LABEL: Record<CardAction, string> = {
+  "approve-now": "Approving…",
+  "approve-suggested": "Approving…",
+  skip: "Skipping…",
+  save: "Saving…",
+  "send-anyway": "Approving…",
+  undo: "Undoing…",
+  retry: "Retrying…",
+};
+
 function DraftCard({
   item,
   lead,
@@ -101,37 +200,32 @@ function DraftCard({
   older?: number;
 }) {
   const router = useRouter();
+  const live = useContext(LiveOutbox);
   const [text, setText] = useState(item.text);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<CardAction | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // The row's words changed under us (approve with an edit, Undo, a refresh): show them.
+  useEffect(() => setText(item.text), [item.text]);
+  // Only drafts are editable. Approved/scheduled/sending/sent cards never show Approve; Undo puts one back to pending.
   const editable =
-    interactive &&
-    ["pending", "approved", "scheduled", "failed", "held"].includes(
-      item.status,
-    );
+    interactive && ["pending", "failed", "held"].includes(item.status);
   const dirty = text !== item.text;
+  const who = lead?.business || item.lead_key || "this lead";
 
-  async function act(
-    action:
-      | "approve-now"
-      | "approve-suggested"
-      | "skip"
-      | "save"
-      | "send-anyway",
-  ) {
-    if (
-      action === "approve-now" &&
-      !confirm(
-        `Send this to ${lead?.business || item.lead_key || "this lead"} now?`,
-      )
-    )
+  async function act(action: CardAction) {
+    if (action === "approve-now" && !confirm(`Send this to ${who} now?`))
       return;
     if (
       action === "send-anyway" &&
       !confirm(
-        `A similar message already went to ${
-          lead?.business || item.lead_key || "this lead"
-        }. Send this one anyway?`,
+        `A similar message already went to ${who}. Send this one anyway?`,
+      )
+    )
+      return;
+    if (
+      action === "retry" &&
+      !confirm(
+        `A failed send can still have gone out. Check the thread with ${who} first. Retry now?`,
       )
     )
       return;
@@ -143,8 +237,14 @@ function DraftCard({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: item.id, action, text }),
       });
-      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        item?: OutboxItem;
+      };
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // In place first (card, header count, lead row), then a soft server refresh for the side effects freesite made
+      // (approving skips the lead's other pending drafts). No full page reload.
+      if (j.item) live?.patch(j.item, true);
       router.refresh();
     } catch (e) {
       setErr((e as Error).message);
@@ -153,11 +253,50 @@ function DraftCard({
     }
   }
 
+  const btn = (
+    action: CardAction,
+    label: string,
+    cls: string,
+    extra: { disabled?: boolean; title?: string } = {},
+  ) => (
+    <button
+      key={action}
+      disabled={!!busy || extra.disabled}
+      title={extra.title}
+      onClick={() => act(action)}
+      className={`rounded-md px-3 py-2 text-sm disabled:opacity-50 ${cls}`}
+    >
+      {label}
+    </button>
+  );
+  const due = !item.send_at || Date.parse(item.send_at) <= Date.now() + 60_000;
+  const statusLine =
+    item.status === "approved" || (item.status === "scheduled" && due) ? (
+      <span className="text-sky-200">Approved — sending within a minute</span>
+    ) : item.status === "scheduled" ? (
+      <span className="text-sky-200">
+        Scheduled — sends {when(item.send_at)}
+      </span>
+    ) : item.status === "sending" ? (
+      <span className="animate-pulse text-violet-200">Sending…</span>
+    ) : item.status === "sent" ? (
+      <span className="text-emerald-300">
+        Sent ✓{" "}
+        <span suppressHydrationWarning className="text-white/45">
+          {when(item.sent_at)}
+        </span>
+      </span>
+    ) : item.status === "skipped" ? (
+      <span className="text-white/40">Skipped</span>
+    ) : null;
+
   // Compact = inside a lead row, which is already an <li>: render a <div> there (nested <li> broke hydration).
   const Tag = compact ? "div" : "li";
   return (
     <Tag
       id={compact ? undefined : `outbox-${item.id}`}
+      data-outbox-id={item.id}
+      data-status={item.status}
       className={`min-w-0 scroll-mt-4 rounded-lg border p-3 ${
         compact
           ? "list-none border-amber-400/25 bg-amber-500/[0.04]"
@@ -168,7 +307,7 @@ function DraftCard({
         <Pill label={item.status} style={STATUS_STYLE[item.status]} />
         {compact ? (
           <span className="text-[11px] font-semibold uppercase text-amber-200/90">
-            suggested reply
+            {item.status === "pending" ? "suggested reply" : "reply"}
           </span>
         ) : (
           <>
@@ -197,13 +336,15 @@ function DraftCard({
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          readOnly={!editable}
+          readOnly={!editable || !!busy}
           rows={
             compact
               ? Math.min(10, Math.max(3, Math.ceil(text.length / 30)))
               : Math.min(12, Math.max(4, text.split("\n").length + 1))
           }
-          className="min-h-24 w-full flex-1 rounded-md border border-white/15 bg-white/[0.03] p-2 text-sm leading-relaxed text-white/90 focus:border-sky-400/60 focus:outline-none"
+          className={`min-h-24 w-full flex-1 rounded-md border border-white/15 bg-white/[0.03] p-2 text-sm leading-relaxed focus:border-sky-400/60 focus:outline-none ${
+            editable ? "text-white/90" : "text-white/60"
+          }`}
         />
         {item.image_path ? (
           interactive ? (
@@ -247,66 +388,84 @@ function DraftCard({
             "— (worker finds the existing chat per the playbook)"
           )}
         </div>
-        <div>
+        <div suppressHydrationWarning>
           suggested: {when(item.suggested_at)}
           {item.send_at ? ` · sends: ${when(item.send_at)}` : ""}
           {item.sent_at ? ` · sent: ${when(item.sent_at)}` : ""}
         </div>
-        {item.error ? <div className="text-rose-300">{item.error}</div> : null}
-      </div>
-      {editable ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {item.status === "held" ? (
-            <button
-              disabled={!!busy || dirty}
-              title={dirty ? "Save the edit first" : undefined}
-              onClick={() => act("send-anyway")}
-              className="rounded-md bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
-            >
-              {busy === "send-anyway" ? "…" : "Send anyway"}
-            </button>
-          ) : item.status !== "failed" ? (
-            <>
-              <button
-                disabled={!!busy}
-                onClick={() => act("approve-now")}
-                className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-              >
-                {busy === "approve-now" ? "…" : "Approve now"}
-              </button>
-              <button
-                disabled={!!busy}
-                onClick={() => act("approve-suggested")}
-                className="rounded-md border border-sky-400/40 px-3 py-2 text-sm text-sky-200 hover:bg-sky-500/10 disabled:opacity-50"
-              >
-                {busy === "approve-suggested"
-                  ? "…"
-                  : item.suggested_at
-                    ? `Approve for ${when(item.suggested_at)}`
-                    : "Approve at suggested time"}
-              </button>
-            </>
-          ) : null}
-          {dirty || item.status === "failed" || item.status === "held" ? (
-            <button
-              disabled={!!busy || !dirty}
-              onClick={() => act("save")}
-              className="rounded-md border border-white/20 px-3 py-2 text-sm text-white/80 hover:bg-white/5 disabled:opacity-40"
-            >
-              {busy === "save"
-                ? "…"
-                : item.status === "failed" || item.status === "held"
-                  ? "Save edit → back to pending"
-                  : "Save edit"}
-            </button>
-          ) : null}
-          <button
-            disabled={!!busy}
-            onClick={() => act("skip")}
-            className="ml-auto rounded-md border border-rose-400/30 px-3 py-2 text-sm text-rose-200 hover:bg-rose-500/10 disabled:opacity-50"
+        {item.error && item.status !== "skipped" ? (
+          <div
+            className={
+              item.status === "held" ? "text-orange-300" : "text-rose-300"
+            }
           >
-            {busy === "skip" ? "…" : "Skip"}
-          </button>
+            {item.status === "failed" ? "Failed: " : ""}
+            {item.error}
+          </div>
+        ) : null}
+      </div>
+      {statusLine ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="flex-1">{statusLine}</span>
+          {interactive && ["approved", "scheduled"].includes(item.status)
+            ? btn(
+                "undo",
+                busy === "undo" ? BUSY_LABEL.undo : "Undo",
+                "border border-white/20 text-white/80 hover:bg-white/5",
+              )
+            : null}
+        </div>
+      ) : null}
+      {editable ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {busy && busy !== "undo" ? (
+            <span className="w-full animate-pulse text-sm text-sky-200">
+              {BUSY_LABEL[busy]}
+            </span>
+          ) : null}
+          {item.status === "held"
+            ? btn(
+                "send-anyway",
+                "Send anyway",
+                "bg-orange-600 font-semibold text-white hover:bg-orange-500",
+                { disabled: dirty, title: dirty ? "Save the edit first" : undefined },
+              )
+            : item.status === "failed"
+              ? btn(
+                  "retry",
+                  "Retry",
+                  "bg-rose-600 font-semibold text-white hover:bg-rose-500",
+                  { disabled: dirty, title: dirty ? "Save the edit first" : undefined },
+                )
+              : [
+                  btn(
+                    "approve-now",
+                    "Approve now",
+                    "bg-emerald-600 font-semibold text-white hover:bg-emerald-500",
+                  ),
+                  btn(
+                    "approve-suggested",
+                    item.suggested_at
+                      ? `Approve for ${when(item.suggested_at)}`
+                      : "Approve at suggested time",
+                    "border border-sky-400/40 text-sky-200 hover:bg-sky-500/10",
+                  ),
+                ]}
+          {dirty || item.status === "failed" || item.status === "held"
+            ? btn(
+                "save",
+                item.status === "failed" || item.status === "held"
+                  ? "Save edit → back to pending"
+                  : "Save edit",
+                "border border-white/20 text-white/80 hover:bg-white/5",
+                { disabled: !dirty },
+              )
+            : null}
+          {btn(
+            "skip",
+            "Skip",
+            "ml-auto border border-rose-400/30 text-rose-200 hover:bg-rose-500/10",
+          )}
         </div>
       ) : null}
       {err ? <div className="mt-2 text-xs text-rose-300">{err}</div> : null}
@@ -329,7 +488,7 @@ function pendingPerLead(outbox: OutboxItem[]) {
 }
 
 export function OutboxPanel({
-  outbox,
+  outbox: base,
   leads,
   interactive,
 }: {
@@ -337,13 +496,18 @@ export function OutboxPanel({
   leads: NewlyUpLead[];
   interactive: boolean;
 }) {
+  const live = useContext(LiveOutbox);
+  const outbox = live?.outbox ?? base;
+  const acted = live?.acted ?? new Set<number>();
   const byKey = new Map(leads.map((l) => [l.key, l]));
   // One pending draft per lead on screen (Abraham #14/#16, 2026-11-18): the newest, with "+N older draft".
   const { newest, older } = pendingPerLead(outbox);
   const open = outbox
     .filter(
       (o) =>
-        OPEN.includes(o.status) &&
+        // A card Shib acted on stays here through Sent ✓ / Failed (until the next page load).
+        (OPEN.includes(o.status) ||
+          (acted.has(o.id) && o.status !== "skipped")) &&
         (o.status !== "pending" ||
           !o.lead_key ||
           newest.get(o.lead_key)?.id === o.id),
@@ -353,7 +517,9 @@ export function OutboxPanel({
         (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) ||
         a.id - b.id,
     );
-  const done = outbox.filter((o) => !OPEN.includes(o.status));
+  const done = outbox.filter(
+    (o) => !OPEN.includes(o.status) && !open.includes(o),
+  );
   const [showDone, setShowDone] = useState(false);
   // Phase 2: each lead's draft is approved from its "Needs you" row, so the full queue starts folded unless a draft
   // has no lead row to sit under.
@@ -380,7 +546,7 @@ export function OutboxPanel({
             ›
           </span>
           Outbox{" "}
-          <span className="text-amber-300">
+          <span className="text-amber-300" data-testid="outbox-waiting">
             {open.filter((o) => o.status === "pending").length} waiting
           </span>
           <span className="ml-1 text-[11px] font-normal normal-case text-white/35">
@@ -401,7 +567,7 @@ export function OutboxPanel({
           <ul className="space-y-3">
             {open.map((o) => (
               <DraftCard
-                key={`${o.id}-${o.status}-${o.text.length}`}
+                key={o.id}
                 item={o}
                 lead={o.lead_key ? byKey.get(o.lead_key) : undefined}
                 interactive={interactive}
@@ -428,7 +594,7 @@ export function OutboxPanel({
                 <ul className="mt-2 space-y-3">
                   {done.map((o) => (
                     <DraftCard
-                      key={`${o.id}-${o.status}`}
+                      key={o.id}
                       item={o}
                       lead={o.lead_key ? byKey.get(o.lead_key) : undefined}
                       interactive={interactive}
@@ -561,11 +727,14 @@ function LeadDetail({
   draft,
   older,
   held,
+  active,
   interactive,
   autoJob,
 }: {
   l: NewlyUpLead;
   draft?: OutboxItem;
+  /** The reply on its way (approved/scheduled/sending), or one Shib acted on this page view (through Sent ✓/Failed). */
+  active?: OutboxItem;
   /** Older pending drafts hidden behind `draft`. */
   older?: number;
   /** A send outbox-worker held: a similar message reached them in the last 12h ("Send anyway"). */
@@ -684,16 +853,25 @@ function LeadDetail({
       <div className="min-w-0 space-y-2">
         {held ? (
           <DraftCard
-            key={`held-${held.id}-${held.text.length}`}
+            key={held.id}
             item={held}
             lead={l}
             interactive={interactive}
             compact
           />
         ) : null}
-        {held && !draft ? null : draft ? (
+        {active ? (
           <DraftCard
-            key={`${draft.id}-${draft.text.length}`}
+            key={active.id}
+            item={active}
+            lead={l}
+            interactive={interactive}
+            compact
+          />
+        ) : null}
+        {(held || active) && !draft ? null : draft ? (
+          <DraftCard
+            key={draft.id}
             item={draft}
             lead={l}
             interactive={interactive}
@@ -848,6 +1026,7 @@ function LeadRow({
   draft,
   older,
   held,
+  active,
   open,
   onToggle,
   reason,
@@ -859,6 +1038,7 @@ function LeadRow({
   draft?: OutboxItem;
   older?: number;
   held?: OutboxItem;
+  active?: OutboxItem;
   open: boolean;
   onToggle: () => void;
   reason?: string;
@@ -911,6 +1091,14 @@ function LeadRow({
             <span className="rounded bg-amber-500/20 px-1 py-px text-[10px] font-semibold uppercase text-amber-200 ring-1 ring-amber-500/40">
               draft
             </span>
+          ) : active ? (
+            <span
+              className={`rounded px-1 py-px text-[10px] font-semibold uppercase ring-1 ${
+                STATUS_STYLE[active.status] || ""
+              } ${active.status === "sending" ? "animate-pulse" : ""}`}
+            >
+              {active.status === "sent" ? "sent ✓" : active.status}
+            </span>
           ) : autoJob ? (
             <span className="animate-pulse rounded bg-sky-500/15 px-1 py-px text-[10px] font-semibold text-sky-200 ring-1 ring-sky-500/30">
               drafting…
@@ -935,6 +1123,7 @@ function LeadRow({
           draft={draft}
           older={older}
           held={held}
+          active={active}
           interactive={interactive}
           autoJob={autoJob}
         />
@@ -1015,13 +1204,16 @@ function StageList({
 
 export function LeadBoard({
   leads,
-  outbox,
+  outbox: base,
   interactive = false,
 }: {
   leads: NewlyUpLead[];
   outbox: OutboxItem[];
   interactive?: boolean;
 }) {
+  const live = useContext(LiveOutbox);
+  const outbox = live?.outbox ?? base;
+  const acted = live?.acted ?? new Set<number>();
   const [showLost, setShowLost] = useState(false);
   // Phones: one expanded row and any number of open sections; "Needs you" starts open, stages start closed.
   const [openRow, setOpenRow] = useState<string | null>(null);
@@ -1039,6 +1231,23 @@ export function LeadBoard({
   for (const o of outbox)
     if (o.status === "held" && o.lead_key && !held.has(o.lead_key))
       held.set(o.lead_key, o);
+  // The reply on its way per lead (approved/scheduled/sending), or the newest one Shib acted on in this page view (so
+  // the row keeps showing it through Sending… → Sent ✓ instead of the card vanishing on Approve).
+  const active = new Map<string, OutboxItem>();
+  for (const o of [...outbox].sort((a, b) => b.id - a.id))
+    if (
+      o.lead_key &&
+      !active.has(o.lead_key) &&
+      (IN_FLIGHT.includes(o.status) ||
+        (acted.has(o.id) && ["sent", "failed"].includes(o.status)))
+    )
+      active.set(o.lead_key, o);
+  // Leads Shib acted on stay where they are until the next page load.
+  const actedLeads = new Set(
+    outbox
+      .filter((o) => acted.has(o.id) && o.lead_key)
+      .map((o) => o.lead_key as string),
+  );
   // Leads with a reply already approved/scheduled/sending/held: never autodrafted (Abraham #11/#12 race, 2026-11-18).
   const inFlight = new Set(
     outbox
@@ -1068,6 +1277,7 @@ export function LeadBoard({
     return !!d && !(ourMove(l) && d.created_at < (l.last_out_at || ""));
   };
   const wanted = (l: NewlyUpLead) =>
+    actedLeads.has(l.key) ||
     held.has(l.key) ||
     liveDraft(l) ||
     (boardColumn(l) !== "Lost / Later" && unanswered(l)) ||
@@ -1075,6 +1285,7 @@ export function LeadBoard({
       (!ourMove(l) || !!l.next_action_at));
   const waits = (l: NewlyUpLead) =>
     !held.has(l.key) &&
+    !actedLeads.has(l.key) &&
     (!!l.snoozed ||
       (!!l.waiting && boardColumn(l) !== "Card saved / won" && !l.card_saved) ||
       (ourMove(l) && !liveDraft(l)));
@@ -1089,7 +1300,10 @@ export function LeadBoard({
   const router = useRouter();
   const [autoJobs, setAutoJobs] = useState<Record<string, string>>({});
   const bare = needs
-    .filter((l) => !drafts.has(l.key) && !inFlight.has(l.key))
+    .filter(
+      (l) =>
+        !drafts.has(l.key) && !inFlight.has(l.key) && !actedLeads.has(l.key),
+    )
     .map((l) => l.key)
     .join(",");
   useEffect(() => {
@@ -1175,6 +1389,7 @@ export function LeadBoard({
             draft={drafts.get(l.key)}
             older={older.get(l.key)}
             held={held.get(l.key)}
+            active={active.get(l.key)}
             open={openRow === k}
             onToggle={() => setOpenRow((r) => (r === k ? null : k))}
             reason={reason?.(l)}

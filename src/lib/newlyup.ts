@@ -135,11 +135,58 @@ function readJson<T>(p: string): T | null {
 
 type SqliteDb = {
   prepare(sql: string): {
-    all(): Record<string, unknown>[];
-    get(): Record<string, unknown>;
+    all(...args: unknown[]): Record<string, unknown>[];
+    get(...args: unknown[]): Record<string, unknown>;
   };
   close(): void;
 };
+
+const strOrNull = (v: unknown) => (v == null || v === "" ? null : String(v));
+function outboxRow(r: Record<string, unknown>): OutboxItem {
+  return {
+    id: Number(r.id),
+    lead_key: strOrNull(r.lead_key),
+    channel: String(r.channel),
+    thread_url: strOrNull(r.thread_url),
+    text: String(r.text ?? ""),
+    image_path: strOrNull(r.image_path),
+    suggested_at: strOrNull(r.suggested_at),
+    status: String(r.status),
+    approved_at: strOrNull(r.approved_at),
+    send_at: strOrNull(r.send_at),
+    sent_at: strOrNull(r.sent_at),
+    error: strOrNull(r.error),
+    created_by: strOrNull(r.created_by),
+    created_at: String(r.created_at),
+  };
+}
+
+// The dashboard's 5s status poll for approved/scheduled/sending cards (GET /api/newlyup/outbox?ids=): just those rows,
+// read-only, no snapshot rebuild. null when freesite.db can't be opened.
+export function readOutboxItems(ROOT: string, ids: number[]): OutboxItem[] | null {
+  const file = path.join(ROOT, "freesite/data/freesite.db");
+  if (!ids.length || !fs.existsSync(file)) return ids.length ? null : [];
+  let db: SqliteDb | null = null;
+  try {
+    const mod = (
+      process as unknown as {
+        getBuiltinModule?: (id: string) => {
+          DatabaseSync: new (f: string, o: object) => SqliteDb;
+        };
+      }
+    ).getBuiltinModule?.("node:sqlite");
+    if (!mod) return null;
+    db = new mod.DatabaseSync(file, { readOnly: true });
+    return db
+      .prepare(`select * from outbox where id in (${ids.map(() => "?").join(",")})`)
+      .all(...ids)
+      .map(outboxRow);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
 
 // getBuiltinModule keeps node:sqlite out of the Next bundler; null on any failure so the JSON backup is used.
 function readFreesiteDb(file: string):
@@ -303,22 +350,7 @@ function readFreesiteDb(file: string):
              order by id desc`,
           )
           .all()
-          .map((r) => ({
-            id: Number(r.id),
-            lead_key: str(r.lead_key),
-            channel: String(r.channel),
-            thread_url: str(r.thread_url),
-            text: String(r.text ?? ""),
-            image_path: str(r.image_path),
-            suggested_at: str(r.suggested_at),
-            status: String(r.status),
-            approved_at: str(r.approved_at),
-            send_at: str(r.send_at),
-            sent_at: str(r.sent_at),
-            error: str(r.error),
-            created_by: str(r.created_by),
-            created_at: String(r.created_at),
-          }))
+          .map(outboxRow)
       : [];
     const groups = hasLeads
       ? db

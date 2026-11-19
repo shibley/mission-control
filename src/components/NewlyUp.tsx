@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { LeadBoard, OutboxPanel } from "./NewlyUpBoard";
+import { LeadBoard, LiveOutboxProvider, OutboxPanel, useLiveOutbox } from "./NewlyUpBoard";
 import type { DashboardData } from "@/lib/source";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -69,9 +69,14 @@ function when(iso?: string | null) {
   return d.toLocaleString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+const EMPTY: import("@/lib/newlyup").OutboxItem[] = [];
+
 export default function NewlyUp({ initial }: { initial: DashboardData }) {
   const t = (initial.snapshot as { newlyupTab?: import("@/lib/newlyup").NewlyUpTab } | null)?.newlyupTab;
   const [tab, setTab] = useState<"board" | "details">("board");
+  // Card actions + the 5s status poll patch this list in place (NewlyUpBoard useLiveOutbox): tab count, header count,
+  // lead rows and the outbox all read it.
+  const live = useLiveOutbox(t?.outbox ?? EMPTY, initial.source === "local");
   if (!t) return <main className="p-6 text-white/60">No Newly Up data in this snapshot yet.</main>;
   const counts = t.tasks.reduce<Record<string, number>>((a, x) => ((a[x.status] = (a[x.status] || 0) + 1), a), {});
   // Older snapshots predate the lead/group tables.
@@ -134,17 +139,19 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
             onClick={() => setTab(k)}
             className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === k ? "border-sky-400 text-white" : "border-transparent text-white/50 hover:text-white/80"}`}
           >
-            {k === "board" ? `Board & outbox${(t.outbox ?? []).some((o) => o.status === "pending") ? ` (${(t.outbox ?? []).filter((o) => o.status === "pending").length})` : ""}` : "Details"}
+            {k === "board" ? `Board & outbox${live.outbox.some((o) => o.status === "pending") ? ` (${live.outbox.filter((o) => o.status === "pending").length})` : ""}` : "Details"}
           </button>
         ))}
       </div>
 
       {tab === "board" ? (
-        <div className="space-y-4">
-          {/* Interactive only when served straight off this Mac; the Vercel copy is the pushed snapshot (read-only). */}
-          <LeadBoard leads={leadList} outbox={t.outbox ?? []} interactive={initial.source === "local"} />
-          <OutboxPanel outbox={t.outbox ?? []} leads={leadList} interactive={initial.source === "local"} />
-        </div>
+        <LiveOutboxProvider value={live}>
+          <div className="space-y-4">
+            {/* Interactive only when served straight off this Mac; the Vercel copy is the pushed snapshot (read-only). */}
+            <LeadBoard leads={leadList} outbox={t.outbox ?? []} interactive={initial.source === "local"} />
+            <OutboxPanel outbox={t.outbox ?? []} leads={leadList} interactive={initial.source === "local"} />
+          </div>
+        </LiveOutboxProvider>
       ) : null}
 
       <div className={`grid grid-cols-1 gap-4 lg:grid-cols-2 ${tab === "details" ? "" : "hidden"}`}>

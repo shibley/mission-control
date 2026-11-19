@@ -284,8 +284,8 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
 
         <Card title="Tasks" right="priorities.json newlyup-*">
           <ul className="space-y-1.5">
-            {t.tasks.filter((x) => x.id !== "freesite").map((x) => (
-              <li key={x.id} className="flex items-start gap-2 text-sm">
+            {t.tasks.filter((x) => x.id !== "freesite").map((x, i) => (
+              <li key={`${x.id}-${i}`} className="flex items-start gap-2 text-sm">
                 <Badge label={x.status} style={STATUS_STYLE[x.status]} />
                 <span className={`min-w-0 ${x.status === "done" ? "text-white/40 line-through" : "text-white/85"}`}>{x.title}</span>
                 {x.owner === "shib" ? <span className="ml-auto shrink-0 text-[10px] text-amber-300">YOU</span> : null}

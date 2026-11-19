@@ -13,7 +13,7 @@ const WEEK = 7 * 864e5;
 const STEPS: { k: keyof Omit<GoalRow, "source">; label: string }[] = [
   { k: "leads", label: "Leads" },
   { k: "replied", label: "Replied" },
-  { k: "previewSent", label: "Prev sent" },
+  { k: "previewSent", label: "Preview" },
   { k: "previewOpened", label: "Opened" },
   { k: "cardSaved", label: "Card" },
   { k: "paid", label: "Paid" },

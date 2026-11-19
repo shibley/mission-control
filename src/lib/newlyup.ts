@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { newlyupGoal, type NewlyUpGoal } from "./newlyupGoal.ts";
 
 // Newly Up tab (Shib 2026-10-29: "make a tab on mission control for tracking this whole project,
 // including FB interactions"). Everything is read from files the project already writes:
@@ -117,6 +118,8 @@ export type NewlyUpTab = {
     url: string;
     expires_at: string;
   }[];
+  /** Goal panel (2026-11-19). Undefined on older snapshots; null when freesite.db can't be read. */
+  goal?: NewlyUpGoal | null;
   /** Open drafts + the last 7 days of sent/failed/skipped. Undefined on snapshots that predate the table. */
   outbox?: OutboxItem[];
   log: string[];
@@ -591,6 +594,7 @@ export function newlyupTab(ROOT: string): NewlyUpTab {
   }
 
   return {
+    goal: newlyupGoal(ROOT),
     tasks,
     leads,
     groups,

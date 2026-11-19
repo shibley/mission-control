@@ -38,6 +38,15 @@ if (!URL_BASE || !TOKEN) {
   process.exit(1);
 }
 
+// Stripe + Instantly numbers for the Newly Up goal panel: fetched here (async, throttled) into a cache file that the
+// synchronous snapshot reads. A failure is logged and the panel says so; the push still goes out.
+try {
+  const { refreshGoalCache } = await import("../src/lib/newlyupGoalFetch.ts");
+  console.log(`push-snapshot: ${await refreshGoalCache(ROOT)}`);
+} catch (e) {
+  console.error(`push-snapshot: goal cache failed — ${e.message}`);
+}
+
 const snap = snapshot();
 
 // Mirror the distributionmax slides before the snapshot goes up, so the URLs the

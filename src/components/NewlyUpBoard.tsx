@@ -45,7 +45,8 @@ export function boardColumn(l: NewlyUpLead): Column {
   );
 }
 
-const OPEN = ["pending", "approved", "scheduled", "sending", "held"];
+// unknown (Shantel #18, 2026-11-18): the worker could not tell whether it went out. Open until Shib answers.
+const OPEN = ["pending", "approved", "scheduled", "sending", "held", "unknown"];
 const STATUS_STYLE: Record<string, string> = {
   pending: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
   approved: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
@@ -54,6 +55,7 @@ const STATUS_STYLE: Record<string, string> = {
   sent: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
   failed: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
   held: "bg-orange-500/15 text-orange-300 ring-orange-500/30",
+  unknown: "bg-yellow-500/20 text-yellow-200 ring-yellow-400/50",
   skipped: "bg-white/10 text-white/40 ring-white/15",
 };
 
@@ -174,7 +176,9 @@ type CardAction =
   | "save"
   | "send-anyway"
   | "undo"
-  | "retry";
+  | "retry"
+  | "went-out"
+  | "didnt-go";
 const BUSY_LABEL: Record<CardAction, string> = {
   "approve-now": "Approving…",
   "approve-suggested": "Approving…",
@@ -183,6 +187,8 @@ const BUSY_LABEL: Record<CardAction, string> = {
   "send-anyway": "Approving…",
   undo: "Undoing…",
   retry: "Retrying…",
+  "went-out": "Marking sent…",
+  "didnt-go": "Back to pending…",
 };
 
 function DraftCard({
@@ -219,6 +225,13 @@ function DraftCard({
       action === "send-anyway" &&
       !confirm(
         `A similar message already went to ${who}. Send this one anyway?`,
+      )
+    )
+      return;
+    if (
+      action === "didnt-go" &&
+      !confirm(
+        `You checked the thread with ${who} and this message is NOT there? It goes back to pending.`,
       )
     )
       return;
@@ -285,6 +298,10 @@ function DraftCard({
         <span suppressHydrationWarning className="text-white/45">
           {when(item.sent_at)}
         </span>
+      </span>
+    ) : item.status === "unknown" ? (
+      <span className="font-semibold text-yellow-200">
+        ⚠️ Unknown, check thread
       </span>
     ) : item.status === "skipped" ? (
       <span className="text-white/40">Skipped</span>
@@ -396,7 +413,11 @@ function DraftCard({
         {item.error && item.status !== "skipped" ? (
           <div
             className={
-              item.status === "held" ? "text-orange-300" : "text-rose-300"
+              item.status === "held"
+                ? "text-orange-300"
+                : item.status === "unknown"
+                  ? "text-yellow-200/80"
+                  : "text-rose-300"
             }
           >
             {item.status === "failed" ? "Failed: " : ""}
@@ -413,6 +434,28 @@ function DraftCard({
                 busy === "undo" ? BUSY_LABEL.undo : "Undo",
                 "border border-white/20 text-white/80 hover:bg-white/5",
               )
+            : null}
+          {interactive && item.status === "unknown"
+            ? [
+                busy === "went-out" || busy === "didnt-go" ? (
+                  <span
+                    key="busy"
+                    className="w-full animate-pulse text-sm text-sky-200"
+                  >
+                    {BUSY_LABEL[busy]}
+                  </span>
+                ) : null,
+                btn(
+                  "went-out",
+                  "It went out",
+                  "bg-emerald-600 font-semibold text-white hover:bg-emerald-500",
+                ),
+                btn(
+                  "didnt-go",
+                  "It didn't",
+                  "border border-white/20 text-white/80 hover:bg-white/5",
+                ),
+              ]
             : null}
         </div>
       ) : null}
@@ -737,7 +780,7 @@ function LeadDetail({
   active?: OutboxItem;
   /** Older pending drafts hidden behind `draft`. */
   older?: number;
-  /** A send outbox-worker held: a similar message reached them in the last 12h ("Send anyway"). */
+  /** A send outbox-worker held (similar message in the last 12h: "Send anyway"), or one it could not confirm (unknown: "It went out" / "It didn't"). */
   held?: OutboxItem;
   interactive: boolean;
   /** Set while the page-load autodraft for this row is running (lib/autodraft in freesite). */
@@ -1083,7 +1126,11 @@ function LeadRow({
               className="h-2 w-2 rounded-full bg-sky-400"
             />
           ) : null}
-          {held ? (
+          {held?.status === "unknown" ? (
+            <span className="rounded bg-yellow-500/20 px-1 py-px text-[10px] font-semibold uppercase text-yellow-200 ring-1 ring-yellow-400/50">
+              ⚠️ unknown
+            </span>
+          ) : held ? (
             <span className="rounded bg-orange-500/20 px-1 py-px text-[10px] font-semibold uppercase text-orange-200 ring-1 ring-orange-500/40">
               held
             </span>
@@ -1229,7 +1276,11 @@ export function LeadBoard({
   // Sends outbox-worker held (similar message sent to the lead in the last 12h): shown on the row with Send anyway.
   const held = new Map<string, OutboxItem>();
   for (const o of outbox)
-    if (o.status === "held" && o.lead_key && !held.has(o.lead_key))
+    if (
+      (o.status === "held" || o.status === "unknown") &&
+      o.lead_key &&
+      !held.has(o.lead_key)
+    )
       held.set(o.lead_key, o);
   // The reply on its way per lead (approved/scheduled/sending), or the newest one Shib acted on in this page view (so
   // the row keeps showing it through Sending… → Sent ✓ instead of the card vanishing on Approve).
@@ -1252,7 +1303,9 @@ export function LeadBoard({
   const inFlight = new Set(
     outbox
       .filter((o) =>
-        ["approved", "scheduled", "sending", "held"].includes(o.status),
+        ["approved", "scheduled", "sending", "held", "unknown"].includes(
+          o.status,
+        ),
       )
       .map((o) => o.lead_key),
   );

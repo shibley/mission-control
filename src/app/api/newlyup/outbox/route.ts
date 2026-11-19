@@ -14,7 +14,8 @@ const run = promisify(execFile);
 // send-anyway: a row outbox-worker held because a similar message went to the lead in the last 12h (`outbox force`).
 // undo: Undo after Approve, back to pending unless the worker already claimed it (`outbox unapprove`).
 // retry: a failed row back to approved (`outbox retry`; the card asks Shib to check the thread first).
-type Action = "approve-now" | "approve-suggested" | "skip" | "save" | "send-anyway" | "undo" | "retry";
+// went-out / didnt-go: Shib's answer on an unknown row (`outbox resolve --went yes|no`): sent, or back to pending.
+type Action = "approve-now" | "approve-suggested" | "skip" | "save" | "send-anyway" | "undo" | "retry" | "went-out" | "didnt-go";
 type Body = { id?: number; action?: Action; text?: string };
 
 // GET ?ids=1,2,3 -> {items}: the card status poll (every 5s while a card is approved/scheduled/sending). Reads only
@@ -43,11 +44,12 @@ export async function POST(req: Request) {
   const id = Number(body.id);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  const verb = ({ "approve-now": "approve", "approve-suggested": "approve", skip: "skip", save: "edit", "send-anyway": "force", undo: "unapprove", retry: "retry" } as Record<string, string>)[body.action ?? ""];
-  if (!verb) return NextResponse.json({ error: "action must be approve-now|approve-suggested|skip|save|send-anyway|undo|retry" }, { status: 400 });
+  const verb = ({ "approve-now": "approve", "approve-suggested": "approve", skip: "skip", save: "edit", "send-anyway": "force", undo: "unapprove", retry: "retry", "went-out": "resolve", "didnt-go": "resolve" } as Record<string, string>)[body.action ?? ""];
+  if (!verb) return NextResponse.json({ error: "action must be approve-now|approve-suggested|skip|save|send-anyway|undo|retry|went-out|didnt-go" }, { status: 400 });
   const args = [path.join(ROOT, "freesite/scripts/nu-track.mjs"), "outbox", verb, String(id)];
   if (body.action === "approve-suggested") args.push("--at", "suggested");
   if (body.action === "skip") args.push("--reason", "skipped by Shib on /newlyup");
+  if (verb === "resolve") args.push("--went", body.action === "went-out" ? "yes" : "no");
 
   // Text goes through a file: a draft can start with "--" or hold anything argv would mangle.
   let tmp: string | null = null;

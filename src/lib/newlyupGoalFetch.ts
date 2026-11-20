@@ -74,11 +74,12 @@ async function fetchStripe(ROOT: string): Promise<GoalCache["stripe"]> {
         id: s.id,
         status: s.status,
         created: new Date(s.created * 1000).toISOString(),
-        amountCents: s.items.data.reduce(
-          (a: number, i: { price: { unit_amount: number | null }; quantity?: number }) =>
-            a + (i.price.unit_amount ?? 0) * (i.quantity ?? 1),
+        // Per month: the $490/yr Website plan (2026-11-20) counts $40.83, not $490.
+        amountCents: Math.round(s.items.data.reduce(
+          (a: number, i: { price: { unit_amount: number | null; recurring?: { interval?: string } | null }; quantity?: number }) =>
+            a + ((i.price.unit_amount ?? 0) * (i.quantity ?? 1)) / (i.price.recurring?.interval === "year" ? 12 : 1),
           0,
-        ),
+        )),
         ref: s.metadata?.nu_ref || "",
         domain: s.metadata?.domain || null,
       });

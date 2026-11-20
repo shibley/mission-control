@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import NewlyUpGoalPanel from "./NewlyUpGoal";
+import NewlyUpEmailPanel from "./NewlyUpEmail";
 import { LeadBoard, LiveOutboxProvider, OutboxPanel, useLiveOutbox } from "./NewlyUpBoard";
 import type { DashboardData } from "@/lib/source";
 
@@ -100,6 +101,7 @@ export default function NewlyUp({ initial }: { initial: DashboardData }) {
       </div>
 
       <NewlyUpGoalPanel goal={t.goal} />
+      <NewlyUpEmailPanel email={t.email} />
 
       {/* Phones: one compact strip instead of four cards. */}
       <div className="grid grid-cols-4 divide-x divide-white/10 rounded-lg border border-white/10 bg-white/[0.02] text-center sm:hidden">

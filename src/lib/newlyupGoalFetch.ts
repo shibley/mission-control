@@ -11,7 +11,36 @@ export type InstantlyWindow = {
   /** reply_count_unique minus automatic (out-of-office) replies. */
   humanReplies: number;
   bounced: number;
+  /** Every email sent in the window, follow-ups included (emails_sent_count). */
+  sent: number;
 };
+
+/** Email panel (Shib 2026-11-20): per-campaign settings and today's sends, plus the inboxes' warmup health. */
+export type EmailCampaignMeta = {
+  id: string;
+  name: string;
+  /** Instantly status: 0 draft, 1 active, 2 paused, 3 completed, … */
+  status: number;
+  dailyLimit: number | null;
+  dailyMaxLeads: number | null;
+  sentToday: number;
+  lastSentAt: string | null;
+  inboxes: string[];
+  /** C4 only: who each email went to and when, to attribute preview views to a recipient. */
+  recipients?: { to: string; at: string }[];
+};
+export type EmailInbox = {
+  email: string;
+  dailyLimit: number | null;
+  status: number;
+  warmupStatus: number;
+  warmupScore: number | null;
+  /** accounts/warmup-analytics aggregate (warmup pool, not real recipients). */
+  health: number | null;
+  warmupSent: number | null;
+  warmupInbox: number | null;
+};
+export type EmailMeta = { campaigns: Record<string, EmailCampaignMeta>; inboxes: EmailInbox[] };
 
 export type GoalCache = {
   at: string;
@@ -25,12 +54,16 @@ export type GoalCache = {
   /** Per campaign label (C1/C2/C4) → window (7/30/all). */
   instantly: Record<string, Record<"7" | "30" | "all", InstantlyWindow>> | null;
   instantlyError: string | null;
+  /** Email panel; fetched in the same Instantly pass. Undefined on caches written before 2026-11-20. */
+  email?: EmailMeta | null;
 };
 
+// C3 is a draft: fetched for the Email panel only; the Goal funnel lists C1/C2/C4 explicitly.
 export const GOAL_CAMPAIGNS: Record<string, string> = {
   C1: "e2397a96-19df-4575-854e-843e2fedf561",
   C2: "46d15145-c633-4d70-b1bd-d15dc6a3dd9a",
   C4: "b5940dbd-72ae-449d-89e8-463ed0889880",
+  C3: "8fb5a286-0a9d-4f0b-98b3-de9c1d63bc27",
 };
 
 export const goalCachePath = (ROOT: string) => path.join(ROOT, "memory/newlyup/goal-cache.json");
@@ -107,7 +140,79 @@ async function fetchStripe(ROOT: string): Promise<GoalCache["stripe"]> {
   return { subs, cards };
 }
 
-async function fetchInstantly(ROOT: string): Promise<GoalCache["instantly"]> {
+// Read-only: every call below is a GET except accounts/warmup-analytics, a POST that only reads.
+async function instantlyJson(key: string, p: string, body?: object) {
+  const res = await fetch(`https://api.instantly.ai/api/v2/${p}`, {
+    method: body ? "POST" : "GET",
+    headers: { Authorization: `Bearer ${key}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`instantly ${p.split("?")[0]}: ${res.status}`);
+  return res.json();
+}
+
+async function fetchEmailMeta(key: string, today: string): Promise<EmailMeta> {
+  const campaigns: EmailMeta["campaigns"] = {};
+  for (const [label, id] of Object.entries(GOAL_CAMPAIGNS)) {
+    const c = await instantlyJson(key, `campaigns/${id}`);
+    const daily: { date: string; sent: number }[] = await instantlyJson(
+      key,
+      `campaigns/analytics/daily?${new URLSearchParams({ campaign_id: id, start_date: today, end_date: today })}`,
+    );
+    // emails is newest first.
+    const last = await instantlyJson(key, `emails?${new URLSearchParams({ campaign_id: id, email_type: "sent", limit: "1" })}`);
+    const meta: EmailCampaignMeta = {
+      id,
+      name: String(c.name ?? label),
+      status: Number(c.status),
+      dailyLimit: c.daily_limit == null ? null : Number(c.daily_limit),
+      dailyMaxLeads: c.daily_max_leads == null ? null : Number(c.daily_max_leads),
+      sentToday: daily.filter((d) => d.date === today).reduce((a, d) => a + Number(d.sent ?? 0), 0),
+      lastSentAt: last.items?.[0]?.timestamp_email ?? null,
+      inboxes: Array.isArray(c.email_list) ? c.email_list : [],
+    };
+    if (label === "C4") {
+      const recipients: { to: string; at: string }[] = [];
+      let after: string | undefined;
+      for (let i = 0; i < 10; i++) {
+        const q = new URLSearchParams({ campaign_id: id, email_type: "sent", limit: "100" });
+        if (after) q.set("starting_after", after);
+        const j = await instantlyJson(key, `emails?${q}`);
+        for (const e of j.items ?? [])
+          recipients.push({ to: String(e.to_address_email_list ?? "").toLowerCase(), at: String(e.timestamp_email) });
+        after = j.next_starting_after;
+        if (!after || !(j.items ?? []).length) break;
+      }
+      meta.recipients = recipients;
+    }
+    campaigns[label] = meta;
+  }
+
+  const used = new Set(Object.values(campaigns).flatMap((c) => c.inboxes));
+  const acc = await instantlyJson(key, "accounts?limit=100");
+  const accounts = (acc.items ?? []).filter((a: { email: string }) => used.has(a.email));
+  const wu = accounts.length
+    ? await instantlyJson(key, "accounts/warmup-analytics", { emails: accounts.map((a: { email: string }) => a.email) })
+    : { aggregate_data: {} };
+  const inboxes: EmailInbox[] = accounts.map(
+    (a: { email: string; daily_limit?: number; status: number; warmup_status: number; stat_warmup_score?: number }) => {
+      const g = wu.aggregate_data?.[a.email];
+      return {
+        email: a.email,
+        dailyLimit: a.daily_limit == null ? null : Number(a.daily_limit),
+        status: Number(a.status),
+        warmupStatus: Number(a.warmup_status),
+        warmupScore: a.stat_warmup_score == null ? null : Number(a.stat_warmup_score),
+        health: g?.health_score == null ? null : Number(g.health_score),
+        warmupSent: g?.sent == null ? null : Number(g.sent),
+        warmupInbox: g?.landed_inbox == null ? null : Number(g.landed_inbox),
+      };
+    },
+  );
+  return { campaigns, inboxes };
+}
+
+async function fetchInstantly(ROOT: string): Promise<{ windows: GoalCache["instantly"]; email: EmailMeta }> {
   const key = cred(ROOT, "INSTANTLY_API_KEY");
   if (!key) throw new Error("INSTANTLY_API_KEY not in .credentials.env");
   const ymd = (daysAgo: number) =>
@@ -130,11 +235,12 @@ async function fetchInstantly(ROOT: string): Promise<GoalCache["instantly"]> {
         contacted: Number(j.new_leads_contacted_count ?? j.contacted_count ?? 0),
         humanReplies: Math.max(0, Number(j.reply_count_unique ?? 0) - Number(j.reply_count_automatic_unique ?? 0)),
         bounced: Number(j.bounced_count ?? 0),
+        sent: Number(j.emails_sent_count ?? 0),
       };
     }
     out[label] = win;
   }
-  return out;
+  return { windows: out, email: await fetchEmailMeta(key, ymd(0)) };
 }
 
 /** Refreshes the cache when it is older than maxAgeMs. Never throws; a failed half keeps its previous value + error. */
@@ -151,6 +257,7 @@ export async function refreshGoalCache(ROOT: string, maxAgeMs = 10 * 60e3): Prom
     stripeError: null,
     instantly: prev?.instantly ?? null,
     instantlyError: null,
+    email: prev?.email ?? null,
   };
   await Promise.all([
     fetchStripe(ROOT).then(
@@ -158,7 +265,7 @@ export async function refreshGoalCache(ROOT: string, maxAgeMs = 10 * 60e3): Prom
       (e) => void (next.stripeError = String(e.message || e)),
     ),
     fetchInstantly(ROOT).then(
-      (s) => void (next.instantly = s),
+      (s) => void ((next.instantly = s.windows), (next.email = s.email)),
       (e) => void (next.instantlyError = String(e.message || e)),
     ),
   ]);

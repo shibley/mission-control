@@ -67,9 +67,9 @@ function Volume({ c }: { c: EmailCampaignRow }) {
 }
 
 const REPLY_COLS: { k: keyof Omit<ReplySplit, "total">; label: string; tone?: string }[] = [
-  { k: "interested", label: "Interested", tone: "text-emerald-300" },
+  { k: "interested", label: "Want", tone: "text-emerald-300" },
   { k: "auto", label: "Auto" },
-  { k: "decline", label: "Decline/stop" },
+  { k: "decline", label: "Stop" },
   { k: "bounce", label: "Bounce" },
   { k: "other", label: "Other" },
 ];
@@ -112,7 +112,9 @@ function Campaign({ c, now }: { c: EmailCampaignRow; now: number }) {
       </div>
       <Volume c={c} />
       <div>
-        <div className="mb-1 text-[11px] font-medium text-white/55">Replies (freesite class)</div>
+        <div className="mb-1 text-[11px] font-medium text-white/55">
+          Replies (freesite class) <span className="font-normal text-white/35">· want = interested, stop = decline/unsubscribe</span>
+        </div>
         <Replies c={c} />
       </div>
       {c.label === "C4" ? (
@@ -227,9 +229,9 @@ export default function NewlyUpEmailPanel({ email }: { email: NewlyUpEmail | nul
         {email.inboxes ? (
           <ul className="space-y-0.5 text-xs">
             {email.inboxes.map((i) => (
-              <li key={i.email} className="flex items-baseline justify-between gap-2">
-                <span className="min-w-0 truncate text-white/65">{i.email}</span>
-                <span className={`shrink-0 tabular-nums ${i.health != null && i.health < 90 ? "text-rose-300" : "text-white/50"}`}>
+              <li key={i.email} className="flex flex-wrap items-baseline justify-between gap-x-2">
+                <span className="min-w-0 break-all text-white/65">{i.email}</span>
+                <span className={`ml-auto tabular-nums ${i.health != null && i.health < 90 ? "text-rose-300" : "text-white/50"}`}>
                   {i.dailyLimit ?? "?"}/day · warmup {i.warmup} · health {i.health ?? "?"}%{i.inboxed ? ` · ${i.inboxed}` : ""}
                 </span>
               </li>
